@@ -69,14 +69,14 @@ def run_pipeline():
         log.info(f"  → {insertados} insertados, {actualizados} actualizados")
 
         # Paso 5 — Dataset entrenable
-        log.info("PASO 5: Generando dataset entrenable...")
-        total_entrenable = generar_dataset_entrenable(df_final)
-        log.info(f"  → {total_entrenable} propiedades vendidas exportadas")
+        # log.info("PASO 5: Generando dataset entrenable...")
+        # total_entrenable = generar_dataset_entrenable(df_final)
+        # log.info(f"  → {total_entrenable} propiedades vendidas exportadas")
 
-        duracion = (datetime.now() - inicio).seconds
-        log.info("=" * 50)
-        log.info(f"ETL completado exitosamente en {duracion} segundos")
-        log.info("=" * 50)
+        # duracion = (datetime.now() - inicio).seconds
+        # log.info("=" * 50)
+        # log.info(f"ETL completado exitosamente en {duracion} segundos")
+        # log.info("=" * 50)
 
     except Exception as e:
         log.error(f"ETL falló: {e}", exc_info=True)

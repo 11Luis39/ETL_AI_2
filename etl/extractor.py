@@ -88,7 +88,7 @@ QUERY_CRM = text("""
       AND ci.name = :ciudad
       AND loc.latitude  BETWEEN :lat_min AND :lat_max
       AND loc.longitude BETWEEN :lng_min AND :lng_max
-      AND YEAR(t.sold_date) IN (2025, 2026)
+      AND YEAR(t.sold_date) IN (2025, 2026, 2024)
     ORDER BY l.id DESC
 """)
 

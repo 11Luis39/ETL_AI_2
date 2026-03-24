@@ -92,7 +92,7 @@ def extraer_coordenadas_ciudad(ciudad: str, bbox: dict, crm_engine) -> pd.DataFr
           AND ci.name = :ciudad
           AND loc.latitude  BETWEEN :lat_min AND :lat_max
           AND loc.longitude BETWEEN :lng_min AND :lng_max
-          AND YEAR(t.sold_date) IN (2025, 2026)
+          AND YEAR(t.sold_date) IN (2025, 2026, 2024)
     """)
     with crm_engine.connect() as conn:
         df = pd.read_sql(query, conn, params={

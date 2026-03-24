@@ -8,16 +8,16 @@ log = logging.getLogger(__name__)
 
 # Mapeo de subtipos → grupos
 TIPO_PROPIEDAD_MAP = {
-    "Casa":                             "Casa",
-    "Casa de Calidad":                  "Casa",
-    "Casa de Campo":                    "Casa",
-    "Casa con Espacio Comercial":       "Casa",
-    "Departamento":                     "Departamento",
-    "Dúplex":                           "Departamento",
-    "Penthouse":                        "Departamento",
-    "Estudio/Monoambiente":             "Departamento",
-    "Condominio / Departamento":        "Departamento",
-    "Apartamento con servicio de hotel":"Departamento",
+    "Casa":                             "Casa", #161
+    "Casa de Calidad":                  "Casa", #42
+    "Casa de Campo":                    "Casa", #229
+    "Casa con Espacio Comercial":       "Casa", #228
+    "Departamento":                     "Departamento", #131
+    "Dúplex":                           "Departamento", #133
+    "Penthouse":                        "Departamento", #190
+    "Estudio/Monoambiente":             "Departamento", #140
+    "Condominio / Departamento":        "Departamento", #174
+    "Apartamento con servicio de hotel":"Departamento", #162
     "Local Comercial":                  "Local Comercial",
     "Comercial/Negocio":                "Local Comercial",
     "Oficina":                          "Oficina",
@@ -32,8 +32,8 @@ TIPO_PROPIEDAD_MAP = {
     "Quinta":                           "Otro",
     "Otros":                            "Otro",
     "Propiedad Agrícola/Ganadera":      "Propiedad Agrícola/Ganadera",
-    "Terreno":                          "Terreno",
-    "Terreno Comercial":                "Terreno",
+    "Terreno":                          "Terreno", #101
+    "Terreno Comercial":                "Terreno", #110
 }
 
 # Campos requeridos por tipo
@@ -71,7 +71,7 @@ def _generar_motivos_exclusion(row: pd.Series) -> list:
 
     LABELS = {
         "construction_area_m": "m2_construidos nulo o 0",
-        "land_m2":             "m2_terreno libre nulo o 0",
+        "land_m2":             "m2_terreno nulo o 0",
         "total_area":          "m2_total nulo o 0",
         "dormitorios":         "dormitorios nulo o 0",
         "banos":               "baños nulo o 0",
@@ -142,20 +142,56 @@ def limpiar_datos(df: pd.DataFrame):
     # Casa        → construction_area_m (área ocupada)
     # Departamento → construction_area_m (área ocupada)
     # Terreno/resto → total_area (superficie total)
-    es_depto_o_casa = df["subtipo_original"].isin([
-        "Departamento", "Dúplex", "Penthouse",
-        "Estudio/Monoambiente", "Condominio / Departamento",
-        "Apartamento con servicio de hotel",
-        "Casa", "Casa de Calidad", "Casa de Campo",
-        "Casa con Espacio Comercial",
-    ])
-    df["m2_construidos"] = np.where(
-        es_depto_o_casa,
-        df["construction_area_m"],
-        df["total_area"]
+    # es_depto_o_casa = df["subtipo_original"].isin([
+    #     "Departamento", "Dúplex", "Penthouse",
+    #     "Estudio/Monoambiente", "Condominio / Departamento",
+    #     "Apartamento con servicio de hotel",
+    #     "Casa", "Casa de Calidad", "Casa de Campo",
+    #     "Casa con Espacio Comercial",
+    # ])
+    # df["m2_construidos"] = np.where(
+    #     es_depto_o_casa,
+    #     df["construction_area_m"],
+    #     df["total_area"]
+    # )
+    
+    # 4 — Calcular m2 correctamente según tipo
+
+    # Inicializar columnas
+    df["m2_construidos"] = np.nan
+    df["m2_terreno"]     = np.nan
+
+    # 🏠 CASA
+    mask_casa = df["tipo_propiedad"] == "Casa"
+    df.loc[mask_casa, "m2_construidos"] = df.loc[mask_casa, "construction_area_m"]
+    df.loc[mask_casa, "m2_terreno"]     = df.loc[mask_casa, "land_m2"]
+
+    # 🏢 DEPARTAMENTO
+    mask_depto = df["tipo_propiedad"] == "Departamento"
+    df.loc[mask_depto, "m2_construidos"] = df.loc[mask_depto, "construction_area_m"]
+    df.loc[mask_depto, "m2_terreno"] = np.where(
+    df.loc[mask_depto, "land_m2"] > 0,
+    df.loc[mask_depto, "land_m2"],
+    np.nan
     )
-    mask_sin_m2 = (df["m2_construidos"] <= 0) & \
-                  (~df["tipo_propiedad"].isin(["Casa", "Departamento", "Terreno"]))
+    
+    # 🌱 TERRENO
+    mask_terreno = df["tipo_propiedad"] == "Terreno"
+    df.loc[mask_terreno, "m2_construidos"] = 0
+    df.loc[mask_terreno, "m2_terreno"]     = df.loc[mask_terreno, "total_area"]
+
+    mask_sin_m2 = (
+        (
+            df["tipo_propiedad"].isin(["Casa", "Departamento"]) &
+            (df["m2_construidos"] <= 0)
+        )
+        |
+        (
+            (df["tipo_propiedad"] == "Terreno") &
+            (df["m2_terreno"] <= 0)
+        )
+    )
+    
     for _, row in df[mask_sin_m2].iterrows():
         todos_excluidos.append({
             "id_propiedad":     row.get("id_propiedad"),
