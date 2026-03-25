@@ -1,3 +1,4 @@
+from networkx import radius
 import pandas as pd
 import numpy as np
 from sqlalchemy import create_engine, text
@@ -504,24 +505,42 @@ function renderHeatmap(datos) {{
         document.getElementById("leyenda-grad").style.background =
             "linear-gradient(to right,#00FF00,#FFFF00,#FF0000)";
         document.getElementById("leg-mid").textContent = "precio promedio";
+
+        layerHeat = L.heatLayer(puntos, {{
+            radius: 25, blur: 20, maxZoom: 15, max: 1.0,
+            gradient: {{ 0.0:"#00FF00", 0.4:"#FFFF00", 0.7:"#FFA500", 1.0:"#FF0000" }}
+        }}).addTo(map);
+
     }} else {{
-        // Densidad — todos los puntos con intensidad 1
+        // --- DENSIDAD: normalizar por percentil 95 para evitar saturación ---
         puntos = datos.map(d => [d.lat, d.lng, 1]);
         document.getElementById("leyenda-titulo").textContent = "Actividad / Operaciones";
         document.getElementById("leyenda-grad").style.background =
-            "linear-gradient(to right,#0000FF,#00FFFF,#FF6600)";
-        document.getElementById("leg-mid").textContent = "densidad de ops";
+            "linear-gradient(to right,#edf8fb,#b2e2e2,#66c2a4,#2ca25f,#006d2c)";
+        document.getElementById("leg-mid").textContent = "densidad media";
         document.getElementById("leg-min").textContent = "Poca actividad";
         document.getElementById("leg-max").textContent = "Mucha actividad";
+
+        // Calcular un radio dinámico: menos radio = más granularidad, se ven los puntos
+        const zoom = map.getZoom();
+        const radioAdaptado = Math.max(8, Math.min(20, zoom * 1.5));
+
+        layerHeat = L.heatLayer(puntos, {{
+            radius:  radioAdaptado,
+            blur:    radioAdaptado * 0.8,
+            maxZoom: 15,
+            max:     1.5,   // ← clave: satura recién con 3 puntos superpuestos, no 1
+            minOpacity: 0.0,
+        gradient: {{
+            0.0: "rgba(0,0,255,0)",    // Transparente
+            0.2: "rgba(0,255,255,0.5)", // Cian
+            0.4: "rgba(0,255,0,0.6)",   // Verde (Precio medio-bajo)
+            0.6: "rgba(255,255,0,0.7)", // Amarillo (Precio medio)
+            0.8: "rgba(255,165,0,0.8)", // Naranja (Precio alto)
+            1.0: "rgba(255,0,0,0.9)"    // Rojo (Zonas premium)
+        }}
+        }}).addTo(map);
     }}
-
-    const gradient = modoHeatmap === "precio"
-        ? {{ 0.0:"#00FF00", 0.4:"#FFFF00", 0.7:"#FFA500", 1.0:"#FF0000" }}
-        : {{ 0.0:"#0000FF", 0.3:"#00FFFF", 0.6:"#FFAA00", 1.0:"#FF4400" }};
-
-    layerHeat = L.heatLayer(puntos, {{
-        radius: 25, blur: 20, maxZoom: 15, gradient
-    }}).addTo(map);
 }}
 
 function renderCapa(datos) {{
