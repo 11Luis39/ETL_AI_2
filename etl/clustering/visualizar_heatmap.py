@@ -437,8 +437,16 @@ let layerClusters = null;
 let layerVoronoi = null;
 
 const map = L.map("map").setView(CENTRO, ZOOM_INIT);
-L.tileLayer("https://{{s}}.basemaps.cartocdn.com/light_all/{{z}}/{{x}}/{{y}}{{r}}.png", {{
-    attribution:"CartoDB", maxZoom:19
+map.createPane("labels");
+map.getPane("labels").style.zIndex = 650;
+map.getPane("labels").style.pointerEvents = "none";
+L.tileLayer("https://{{s}}.basemaps.cartocdn.com/light_nolabels/{{z}}/{{x}}/{{y}}{{r}}.png", {{
+    attribution: "CartoDB",
+    maxZoom: 19
+}}).addTo(map);
+
+L.tileLayer("https://{{s}}.basemaps.cartocdn.com/light_only_labels/{{z}}/{{x}}/{{y}}{{r}}.png", {{
+    pane: "labels"
 }}).addTo(map);
 
 function filtrarDatos() {{
@@ -523,21 +531,21 @@ function renderHeatmap(datos) {{
 
         // Calcular un radio dinámico: menos radio = más granularidad, se ven los puntos
         const zoom = map.getZoom();
-        const radioAdaptado = Math.max(8, Math.min(20, zoom * 1.5));
-
+        const radioAdaptado = Math.max(8, Math.min(18, zoom * 1.2));
+        
         layerHeat = L.heatLayer(puntos, {{
             radius:  radioAdaptado,
-            blur:    radioAdaptado * 0.8,
+            blur:    radioAdaptado * 0.5,
             maxZoom: 15,
-            max:     1.5,   // ← clave: satura recién con 3 puntos superpuestos, no 1
-            minOpacity: 0.0,
+            max:     1.8,   // ← clave: satura recién con 3 puntos superpuestos, no 1
+            minOpacity: 0.08,
         gradient: {{
-            0.0: "rgba(0,0,255,0)",    // Transparente
-            0.2: "rgba(0,255,255,0.5)", // Cian
-            0.4: "rgba(0,255,0,0.6)",   // Verde (Precio medio-bajo)
-            0.6: "rgba(255,255,0,0.7)", // Amarillo (Precio medio)
-            0.8: "rgba(255,165,0,0.8)", // Naranja (Precio alto)
-            1.0: "rgba(255,0,0,0.9)"    // Rojo (Zonas premium)
+            0.0: "rgba(0,0,255,0)",
+            0.2: "rgba(0,255,255,0.3)",
+            0.4: "rgba(0,255,0,0.4)",
+            0.6: "rgba(255,255,0,0.5)",
+            0.8: "rgba(255,165,0,0.6)",
+            1.0: "rgba(255,0,0,0.5)"
         }}
         }}).addTo(map);
     }}
