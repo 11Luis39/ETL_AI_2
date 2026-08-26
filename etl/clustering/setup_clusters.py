@@ -50,6 +50,7 @@ CIUDADES_CONFIG = {
     "Samaipata":   {"tier": 2, "n_clusters": 1, "bbox": {"lat": (-18.3, -18.1), "lng": (-63.9, -63.7)}},
     "Cotoca":      {"tier": 2, "n_clusters": 1, "bbox": {"lat": (-17.9, -17.7), "lng": (-63.1, -62.9)}},
     "Potosí":      {"tier": 2, "n_clusters": 1, "bbox": {"lat": (-19.7, -19.4), "lng": (-65.9, -65.6)}},
+    "Satelite Norte": {"tier": 2, "n_clusters": 1, "bbox": {"lat": (-17.6, -17.4), "lng": (-63.2, -63.0)}},
 }
 
 # ------------------------------------------------------------

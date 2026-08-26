@@ -37,7 +37,7 @@ CREATE TABLE IF NOT EXISTS property_analytics (
     -- Tipo
     tipo_propiedad              VARCHAR(30)     NOT NULL,
     subtipo_original            VARCHAR(100),
-    categoria_propiedad         VARCHAR(100),
+    --categoria_propiedad         VARCHAR(100),
     estado_propiedad            VARCHAR(100),
     segmento                    VARCHAR(50), 
 
@@ -78,7 +78,7 @@ CREATE TABLE IF NOT EXISTS property_analytics (
 
     -- Estado
     status                      VARCHAR(50),
-    transaction_type            VARCHAR(20),
+    --transaction_type            VARCHAR(20),
 
     -- Control ETL
     fecha_carga                 TIMESTAMP       DEFAULT NOW(),

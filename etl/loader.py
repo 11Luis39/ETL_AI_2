@@ -10,7 +10,7 @@ log = logging.getLogger(__name__)
 
 COLUMNAS_ANALYTICS = [
     "id_propiedad", "mlsid", "tipo_propiedad", "subtipo_original",
-    "categoria_propiedad", "estado_propiedad", 
+     "estado_propiedad", 
     "segmento",
     "tipo_transaccion",
     "latitude", "longitude", "cluster_zona", "ciudad",
@@ -20,7 +20,7 @@ COLUMNAS_ANALYTICS = [
     "tiempo_en_mercado", "numero_reducciones",
     "diferencia_vs_promedio_zona", "ratio_activas_vendidas_zona",
     "mes_publicacion", "anio_publicacion", "fecha_venta",
-    "status", "transaction_type",
+    "status"
 ]
 
 # precio_cierre viene del extractor — se mapea según tipo_transaccion
@@ -114,7 +114,7 @@ def cargar_datos(df: pd.DataFrame):
     upsert_sql = text("""
         INSERT INTO property_analytics (
             id_propiedad, mlsid, tipo_propiedad, subtipo_original,
-            categoria_propiedad, estado_propiedad, segmento,
+            estado_propiedad, segmento,
             tipo_transaccion,
             latitude, longitude, cluster_zona, ciudad,
             m2_construidos, m2_terreno,
@@ -123,10 +123,10 @@ def cargar_datos(df: pd.DataFrame):
             tiempo_en_mercado, numero_reducciones,
             diferencia_vs_promedio_zona, ratio_activas_vendidas_zona,
             mes_publicacion, anio_publicacion, fecha_venta,
-            status, transaction_type
+            status
         ) VALUES (
             :id_propiedad, :mlsid, :tipo_propiedad, :subtipo_original,
-            :categoria_propiedad, :estado_propiedad, :segmento,
+            :estado_propiedad, :segmento,
             :tipo_transaccion,
             :latitude, :longitude, :cluster_zona, :ciudad,
             :m2_construidos, :m2_terreno,
@@ -135,7 +135,7 @@ def cargar_datos(df: pd.DataFrame):
             :tiempo_en_mercado, :numero_reducciones,
             :diferencia_vs_promedio_zona, :ratio_activas_vendidas_zona,
             :mes_publicacion, :anio_publicacion, :fecha_venta,
-            :status, :transaction_type
+            :status
         )
         ON CONFLICT (id_propiedad) DO UPDATE SET
             precio_publicacion          = EXCLUDED.precio_publicacion,

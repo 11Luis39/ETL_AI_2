@@ -44,24 +44,43 @@ CAMPOS_REQUERIDOS = {
 }
 
 # Precio mínimo en BOB por tipo — VENTA
+# PRECIO_MINIMO_VENTA = {
+#     "Casa":                        50000,
+#     "Departamento":                30000,
+#     "Terreno":                     10000,
+#     "Local Comercial":             20000,
+#     "Oficina":                     20000,
+#     "Otro":                        10000,
+#     "Propiedad Agrícola/Ganadera": 10000,
+# }
+
 PRECIO_MINIMO_VENTA = {
-    "Casa":                        50000,
-    "Departamento":                30000,
-    "Terreno":                     10000,
-    "Local Comercial":             20000,
-    "Oficina":                     20000,
-    "Otro":                        10000,
-    "Propiedad Agrícola/Ganadera": 10000,
+    "Casa":                        7200,   # 50000 / 6.96
+    "Departamento":                4300,   # 30000 / 6.96
+    "Terreno":                     1500,   # 10000 / 6.96
+    "Local Comercial":             2900,   # 20000 / 6.96
+    "Oficina":                     2900,
+    "Otro":                        1500,
+    "Propiedad Agrícola/Ganadera": 1500,
 }
 
 # Precio mínimo en BOB/mes por tipo — ALQUILER
+# PRECIO_MINIMO_ALQUILER = {
+#     "Casa":                         500,
+#     "Departamento":                 800,
+#     "Local Comercial":              500,
+#     "Oficina":                      500,
+#     "Otro":                         500,
+#     "Propiedad Agrícola/Ganadera":  500,
+# }
+
 PRECIO_MINIMO_ALQUILER = {
-    "Casa":                         500,
-    "Departamento":                 800,
-    "Local Comercial":              500,
-    "Oficina":                      500,
-    "Otro":                         500,
-    "Propiedad Agrícola/Ganadera":  500,
+    "Casa":                         72,   # 500 / 6.96
+    "Departamento":                115,   # 800 / 6.96
+    "Local Comercial":              72,
+    "Oficina":                      72,
+    "Otro":                         72,
+    "Propiedad Agrícola/Ganadera":  72,
 }
 
 

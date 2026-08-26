@@ -50,7 +50,6 @@ QUERY_CRM = text("""
         ltt.name                        AS transaction_type,
         sl.name                         AS status,
         sp.name                         AS subtipo_original,
-        pc.name_properties_categories   AS categoria_propiedad,
         stp.name_state_properties       AS estado_propiedad,
         ci.name                         AS ciudad,
 
