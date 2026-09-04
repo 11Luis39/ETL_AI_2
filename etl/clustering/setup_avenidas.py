@@ -1,17 +1,15 @@
-import os
 import logging
+import os
 import sys
-import osmnx as ox
-import geopandas as gpd
-import pandas as pd
-from dotenv import load_dotenv
 
-load_dotenv()
+import geopandas as gpd
+import osmnx as ox
+import pandas as pd
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger(__name__)
 
@@ -20,11 +18,10 @@ log = logging.getLogger(__name__)
 # ------------------------------------------------------------
 
 VIAS = {
-
     # 1 — Vías de Conexión Nacional y Regional
     "conexion_nacional": {
-        "label":  "Conexión Nacional/Regional",
-        "color":  "#DC2626",   # rojo intenso
+        "label": "Conexión Nacional/Regional",
+        "color": "#DC2626",  # rojo intenso
         "weight": 5,
         "vias": [
             {"nombre": "Avenida Grigotá", "exacto": True},
@@ -34,44 +31,53 @@ VIAS = {
             {"nombre": "Avenida G77", "exacto": True},
         ],
     },
-
     # 2 — Anillos principales (1ro al 4to)
     "anillos_principales": {
-        "label":  "Anillos Principales (1ro–4to)",
-        "color":  "#EA580C",
+        "label": "Anillos Principales (1ro–4to)",
+        "color": "#EA580C",
         "weight": 4,
         "vias": [
-            {"nombre": "Avenida Uruguay",               "exacto": True},
-            {"nombre": "Avenida Cañoto",                "exacto": True},
-            {"nombre": "Avenida Irala",                 "exacto": True},
-            {"nombre": "Avenida Argomosa",              "exacto": True},
-            {"nombre": "Avenida El Trompillo",          "exacto": True},
-            {"nombre": "Avenida Viedma",                "exacto": True},
-            {"nombre": "Avenida Santa Cruz",            "exacto": True},
-            {"nombre": "Avenida Cristóbal de Mendoza",  "exacto": True},
-            {"nombre": "Avenida 26 de febrero",         "exacto": True},
-            "Tercer Anillo",                                      
-            {"nombre": "Avenida Roque Aguilera",        "exacto": True},
-            {"nombre": "Avenida Noel Kempff",           "exacto": True},
-            {"nombre": "Avenida Noel Kempff Mercado",   "exacto": True,
-             "bbox": {
-                "lat_min": -17.81, "lat_max": -17.74, 
-                "lng_min": -63.21, "lng_max": -63.15,
-            }},
-            {"nombre": "Avenida Juan Pablo II", "exacto": True, "bbox": {
-                "lat_min": -17.81, "lat_max": -17.79,
-                "lng_min": -63.17, "lng_max": -63.15,
-            }},
+            {"nombre": "Avenida Uruguay", "exacto": True},
+            {"nombre": "Avenida Cañoto", "exacto": True},
+            {"nombre": "Avenida Irala", "exacto": True},
+            {"nombre": "Avenida Argomosa", "exacto": True},
+            {"nombre": "Avenida El Trompillo", "exacto": True},
+            {"nombre": "Avenida Viedma", "exacto": True},
+            {"nombre": "Avenida Santa Cruz", "exacto": True},
+            {"nombre": "Avenida Cristóbal de Mendoza", "exacto": True},
+            {"nombre": "Avenida 26 de febrero", "exacto": True},
+            "Tercer Anillo",
+            {"nombre": "Avenida Roque Aguilera", "exacto": True},
+            {"nombre": "Avenida Noel Kempff", "exacto": True},
+            {
+                "nombre": "Avenida Noel Kempff Mercado",
+                "exacto": True,
+                "bbox": {
+                    "lat_min": -17.81,
+                    "lat_max": -17.74,
+                    "lng_min": -63.21,
+                    "lng_max": -63.15,
+                },
+            },
+            {
+                "nombre": "Avenida Juan Pablo II",
+                "exacto": True,
+                "bbox": {
+                    "lat_min": -17.81,
+                    "lat_max": -17.79,
+                    "lng_min": -63.17,
+                    "lng_max": -63.15,
+                },
+            },
             "Cuarto Anillo",
-            {"nombre": "Avenida Antonio Vaca Diez",     "exacto": True},
+            {"nombre": "Avenida Antonio Vaca Diez", "exacto": True},
             {"nombre": "Avenida Marcelo Terceros Bánzer", "exacto": True},
         ],
     },
-
     # 3 — Anillos de expansión (5to al 8vo)
     "anillos_expansion": {
-        "label":  "Anillos Expansión (5to–8vo)",
-        "color":  "#F59E0B",   # amarillo
+        "label": "Anillos Expansión (5to–8vo)",
+        "color": "#F59E0B",  # amarillo
         "weight": 3,
         "vias": [
             "Quinto Anillo",
@@ -81,13 +87,10 @@ VIAS = {
             "Noveno Anillo",
         ],
     },
-
     # 4 — Avenidas Primarias (estructurantes)
-
-
-"primarias": {
-        "label":  "Avenidas Primarias",
-        "color":  "#2563EB",   # azul
+    "primarias": {
+        "label": "Avenidas Primarias",
+        "color": "#2563EB",  # azul
         "weight": 4,
         "vias": [
             {"nombre": "Avenida San Martín", "exacto": True},
@@ -146,11 +149,10 @@ VIAS = {
             {"nombre": "Calle Diamante", "exacto": True},
         ],
     },
-
     # 5 — Plan 3000
     "plan_3000": {
-        "label":  "Plan 3.000 (D-8)",
-        "color":  "#7C3AED",   # violeta
+        "label": "Plan 3.000 (D-8)",
+        "color": "#7C3AED",  # violeta
         "weight": 3,
         "vias": [
             "Paurito",
@@ -159,14 +161,13 @@ VIAS = {
             "Plan Tres Mil",
             "Monseñor Nicolás Castellanos Franco",
             "Palmar Viruez",
-            "El Quior"
+            "El Quior",
         ],
     },
-
     # 6 — Villa Primero de Mayo
     "villa": {
-        "label":  "Villa 1ro de Mayo (D-7)",
-        "color":  "#059669",   # verde
+        "label": "Villa 1ro de Mayo (D-7)",
+        "color": "#059669",  # verde
         "weight": 3,
         "vias": [
             "Cumavi",
@@ -176,11 +177,10 @@ VIAS = {
             "Arroyito",
         ],
     },
-
     # 7 — Pampa de la Isla
     "pampa": {
-        "label":  "Pampa de la Isla (D-6)",
-        "color":  "#0891B2",   # celeste
+        "label": "Pampa de la Isla (D-6)",
+        "color": "#0891B2",  # celeste
         "weight": 3,
         "vias": [
             "Virgen de Luján",
@@ -188,11 +188,10 @@ VIAS = {
             "Las Orquídeas",
         ],
     },
-
     # 8 — Los Lotes / Zona Sur
     "zona_sur": {
-        "label":  "Los Lotes / Zona Sur (D-9/D-12)",
-        "color":  "#BE185D",   # rosa oscuro
+        "label": "Los Lotes / Zona Sur (D-9/D-12)",
+        "color": "#BE185D",  # rosa oscuro
         "weight": 3,
         "vias": [
             {"nombre": "Avenida Prolongacion Bolivia", "exacto": True},
@@ -221,7 +220,7 @@ def descargar_red_vial():
 
     G = ox.graph_from_place(
         "Santa Cruz de la Sierra, Bolivia",
-        network_type="all",        # incluye peatonal y vehicular
+        network_type="all",  # incluye peatonal y vehicular
         retain_all=False,
     )
 
@@ -230,8 +229,7 @@ def descargar_red_vial():
 
     # Normalizar columna name
     edges["name_norm"] = edges["name"].apply(
-        lambda x: x if isinstance(x, str)
-        else (", ".join(x) if isinstance(x, list) else "")
+        lambda x: x if isinstance(x, str) else (", ".join(x) if isinstance(x, list) else "")
     )
 
     os.makedirs("data/geo", exist_ok=True)
@@ -264,51 +262,50 @@ def filtrar_vias(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
         edges_wgs = edges
     centroides = edges_wgs.geometry.centroid
 
-    resultados        = []
+    resultados = []
     total_encontradas = 0
     total_no_encontradas = 0
 
     for categoria, info in VIAS.items():
         for via in info["vias"]:
-
             if isinstance(via, dict):
                 nombre = via["nombre"]
                 exacto = via.get("exacto", False)
-                bbox   = via.get("bbox", None)      # ← None si no tiene bbox
+                bbox = via.get("bbox", None)  # ← None si no tiene bbox
             else:
                 nombre = via
                 exacto = False
-                bbox   = None
+                bbox = None
 
             nombre_lower = nombre.strip().lower()
 
             # 1 — Filtro por nombre
             if exacto:
                 mask = edges["nombres_lista"].apply(
-                    lambda lista: nombre_lower in lista
+                    lambda lista, objetivo=nombre_lower: objetivo in lista
                 )
             else:
                 mask = edges["nombres_lista"].apply(
-                    lambda lista: any(nombre_lower in n for n in lista)
+                    lambda lista, objetivo=nombre_lower: any(objetivo in nombre for nombre in lista)
                 )
 
             # 2 — Filtro por bbox SOLO si está definido
             if bbox is not None:
                 mask_bbox = (
-                    (centroides.y >= bbox["lat_min"]) &
-                    (centroides.y <= bbox["lat_max"]) &
-                    (centroides.x >= bbox["lng_min"]) &
-                    (centroides.x <= bbox["lng_max"])
+                    (centroides.y >= bbox["lat_min"])
+                    & (centroides.y <= bbox["lat_max"])
+                    & (centroides.x >= bbox["lng_min"])
+                    & (centroides.x <= bbox["lng_max"])
                 )
                 mask = mask & mask_bbox  # ← solo se aplica si hay bbox
 
             segs = edges[mask].copy()
 
             if len(segs) > 0:
-                segs["categoria"]  = categoria
-                segs["label"]      = info["label"]
-                segs["color"]      = info["color"]
-                segs["weight"]     = info["weight"]
+                segs["categoria"] = categoria
+                segs["label"] = info["label"]
+                segs["color"] = info["color"]
+                segs["weight"] = info["weight"]
                 segs["nombre_via"] = nombre
                 resultados.append(segs)
                 modo = "exacto" if exacto else "parcial"
@@ -335,13 +332,14 @@ def filtrar_vias(edges: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
     return df
 
+
 # ------------------------------------------------------------
 # Resumen por categoría
 # ------------------------------------------------------------
 def imprimir_resumen(df: gpd.GeoDataFrame):
-    log.info("\n" + "="*60)
+    log.info("\n" + "=" * 60)
     log.info("RESUMEN POR CATEGORÍA")
-    log.info("="*60)
+    log.info("=" * 60)
 
     resumen = df.groupby("label").size().reset_index(name="segmentos")
     for _, row in resumen.iterrows():
@@ -354,9 +352,9 @@ def imprimir_resumen(df: gpd.GeoDataFrame):
 # Main
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("INTRAMAX — Setup Vías Santa Cruz de la Sierra")
-    log.info("="*60)
+    log.info("=" * 60)
 
     os.makedirs("data/geo", exist_ok=True)
 
@@ -370,6 +368,6 @@ if __name__ == "__main__":
         log.info("  - data/geo/red_vial_scz.gpkg       (red vial completa)")
         log.info("  - data/geo/vias_clasificadas.gpkg  (vías clasificadas)")
         log.info("\nAhora podés correr:")
-        log.info("  python etl/clustering/visualizar_avenidas.py")
+        log.info("  python -m etl.clustering.visualizar_avenidas")
     else:
         log.error("Setup falló — verificar conexión a internet")

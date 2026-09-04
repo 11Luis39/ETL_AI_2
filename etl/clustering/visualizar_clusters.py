@@ -1,69 +1,57 @@
-import folium
-from folium.plugins import MiniMap, Fullscreen
-import pandas as pd
-import numpy as np
-from sqlalchemy import create_engine, text
-from sklearn.metrics import pairwise_distances
-from dotenv import load_dotenv
-import os
-import webbrowser
 import logging
+import os
 import sys
+import webbrowser
+from datetime import date
 
-load_dotenv()
+import folium
+import pandas as pd
+from folium.plugins import Fullscreen, MiniMap
+from sklearn.metrics import pairwise_distances
+from sqlalchemy import text
+
+from etl.config import get_crm_engine, get_pg_engine
+from etl.constants import CIUDADES_ETL
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger(__name__)
 
 COLORES_HEX = [
-    "#E6194B", "#3CB44B", "#4363D8", "#F58231", "#911EB4",
-    "#42D4F4", "#F032E6", "#BFEF45", "#FFE119", "#FABEBE",
+    "#E6194B",
+    "#3CB44B",
+    "#4363D8",
+    "#F58231",
+    "#911EB4",
+    "#42D4F4",
+    "#F032E6",
+    "#BFEF45",
+    "#FFE119",
+    "#FABEBE",
 ]
 
 COLORES_ICONOS = [
-    "red", "blue", "green", "purple", "orange",
-    "darkred", "darkblue", "darkgreen", "cadetblue", "lightred",
+    "red",
+    "blue",
+    "green",
+    "purple",
+    "orange",
+    "darkred",
+    "darkblue",
+    "darkgreen",
+    "cadetblue",
+    "lightred",
 ]
 
-BBOX_CIUDAD = {
-    "Santa Cruz de la Sierra": {"lat": (-18.5, -17.0), "lng": (-64.0, -62.5)},
-    "Cochabamba":              {"lat": (-17.8, -17.2), "lng": (-66.5, -65.8)},
-    "La Paz":                  {"lat": (-16.8, -16.3), "lng": (-68.3, -67.8)},
-    "Porongo":                 {"lat": (-17.9, -17.5), "lng": (-63.6, -63.2)},
-    "El Alto":                 {"lat": (-16.6, -16.4), "lng": (-68.3, -68.0)},
-    "Oruro":                   {"lat": (-18.1, -17.8), "lng": (-67.2, -67.0)},
-    "Tiquipaya":               {"lat": (-17.4, -17.2), "lng": (-66.3, -66.1)},
-    "Sacaba":                  {"lat": (-17.5, -17.3), "lng": (-65.9, -65.7)},
-    "Sucre":                   {"lat": (-19.2, -18.9), "lng": (-65.4, -65.1)},
-    "La Guardia":              {"lat": (-17.9, -17.7), "lng": (-63.4, -63.2)},
-    "Warnes":                  {"lat": (-17.6, -17.4), "lng": (-63.3, -63.1)},
-    "Quillacollo":             {"lat": (-17.5, -17.3), "lng": (-66.3, -66.1)},
-    "Samaipata":               {"lat": (-18.3, -18.1), "lng": (-63.9, -63.7)},
-    "Cotoca":                  {"lat": (-17.9, -17.7), "lng": (-63.1, -62.9)},
-    "Potosí":                  {"lat": (-19.7, -19.4), "lng": (-65.9, -65.6)},
-}
+BBOX_CIUDAD = CIUDADES_ETL
 
 # Colores para diferenciar ventas y alquileres en el mapa
-COLOR_VENTA    = "#2563EB"   # azul
-COLOR_ALQUILER = "#16A34A"   # verde
+COLOR_VENTA = "#2563EB"  # azul
+COLOR_ALQUILER = "#16A34A"  # verde
 
-def get_pg_engine():
-    url = (
-        f"postgresql+psycopg2://{os.getenv('PG_USERNAME')}:{os.getenv('PG_PASSWORD')}"
-        f"@{os.getenv('PG_HOST')}:{os.getenv('PG_PORT')}/{os.getenv('PG_DATABASE')}"
-    )
-    return create_engine(url)
-
-def get_crm_engine():
-    url = (
-        f"mysql+pymysql://{os.getenv('CRM_USERNAME')}:{os.getenv('CRM_PASSWORD')}"
-        f"@{os.getenv('CRM_HOST')}:{os.getenv('CRM_PORT')}/{os.getenv('CRM_DATABASE')}"
-    )
-    return create_engine(url)
 
 # ------------------------------------------------------------
 # Cargar centroides
@@ -71,15 +59,14 @@ def get_crm_engine():
 def cargar_centroides() -> pd.DataFrame:
     engine = get_pg_engine()
     with engine.connect() as conn:
-        df = pd.read_sql(
-            "SELECT * FROM zona_clusters ORDER BY ciudad, cluster_id", conn
-        )
+        df = pd.read_sql("SELECT * FROM zona_clusters ORDER BY ciudad, cluster_id", conn)
     ciudades = df["ciudad"].unique().tolist()
     log.info(f"  → {len(df)} clusters cargados para {len(ciudades)} ciudades")
     for ciudad in ciudades:
         n = len(df[df["ciudad"] == ciudad])
         log.info(f"     {ciudad}: {n} cluster(s)")
     return df
+
 
 # ------------------------------------------------------------
 # Cargar propiedades — ventas Y alquileres por ciudad
@@ -101,18 +88,24 @@ def cargar_propiedades_ciudad(ciudad: str, bbox: dict, crm_engine) -> pd.DataFra
           AND ci.name = :ciudad
           AND loc.latitude  BETWEEN :lat_min AND :lat_max
           AND loc.longitude BETWEEN :lng_min AND :lng_max
-          AND YEAR(t.sold_date) IN (2025, 2026, 2024)
+          AND t.sold_date >= :fecha_desde
     """)
     with crm_engine.connect() as conn:
-        df = pd.read_sql(query, conn, params={
-            "ciudad":  ciudad,
-            "lat_min": bbox["lat"][0],
-            "lat_max": bbox["lat"][1],
-            "lng_min": bbox["lng"][0],
-            "lng_max": bbox["lng"][1],
-        })
+        df = pd.read_sql(
+            query,
+            conn,
+            params={
+                "ciudad": ciudad,
+                "lat_min": bbox["lat"][0],
+                "lat_max": bbox["lat"][1],
+                "lng_min": bbox["lng"][0],
+                "lng_max": bbox["lng"][1],
+                "fecha_desde": date(date.today().year - 2, 1, 1),
+            },
+        )
     df["ciudad"] = ciudad
     return df
+
 
 # ------------------------------------------------------------
 # Asignar cluster por ciudad
@@ -127,56 +120,62 @@ def asignar_clusters(df_props: pd.DataFrame, df_centroides: pd.DataFrame) -> pd.
             log.warning(f"  No hay centroides para {ciudad} — saltando")
             continue
 
-        coords     = props_ciudad[["latitude", "longitude"]].values
+        coords = props_ciudad[["latitude", "longitude"]].values
         centroides = cents_ciudad[["centroide_lat", "centroide_lng"]].values
         distancias = pairwise_distances(coords, centroides, metric="euclidean")
-        indices    = distancias.argmin(axis=1)
+        indices = distancias.argmin(axis=1)
 
         props_ciudad["cluster_id"] = cents_ciudad["cluster_id"].values[indices]
         resultados.append(props_ciudad)
 
     return pd.concat(resultados, ignore_index=True) if resultados else pd.DataFrame()
 
+
 # ------------------------------------------------------------
 # Generar mapa
 # ------------------------------------------------------------
 def generar_mapa(df_centroides: pd.DataFrame, df_props: pd.DataFrame) -> folium.Map:
     mapa = folium.Map(location=[-16.5, -64.5], zoom_start=6, tiles=None)
-    folium.TileLayer("CartoDB positron",    name="Mapa claro").add_to(mapa)
+    folium.TileLayer("CartoDB positron", name="Mapa claro").add_to(mapa)
     folium.TileLayer("CartoDB dark_matter", name="Mapa oscuro").add_to(mapa)
     folium.TileLayer(
-    tiles="https://tile.opentopomap.org/{z}/{x}/{y}.png",
-    attr="OpenTopoMap",
-    name="Topográfico",
+        tiles="https://tile.opentopomap.org/{z}/{x}/{y}.png",
+        attr="OpenTopoMap",
+        name="Topográfico",
     ).add_to(mapa)
 
     folium.TileLayer(
-    tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
-    attr="Esri",
-    name="Esri Street Map",
+        tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Street_Map/MapServer/tile/{z}/{y}/{x}",
+        attr="Esri",
+        name="Esri Street Map",
     ).add_to(mapa)
 
     ciudades = df_centroides["ciudad"].unique().tolist()
 
     for ciudad in ciudades:
         cents_ciudad = df_centroides[df_centroides["ciudad"] == ciudad]
-        props_ciudad = df_props[df_props["ciudad"] == ciudad] if len(df_props) > 0 else pd.DataFrame()
-        n_clusters   = len(cents_ciudad)
+        props_ciudad = (
+            df_props[df_props["ciudad"] == ciudad] if len(df_props) > 0 else pd.DataFrame()
+        )
+        n_clusters = len(cents_ciudad)
 
-        ventas_n     = (props_ciudad["tipo_transaccion"] == "Venta").sum()    if len(props_ciudad) > 0 else 0
-        alquileres_n = (props_ciudad["tipo_transaccion"] == "Alquiler").sum() if len(props_ciudad) > 0 else 0
+        ventas_n = (
+            (props_ciudad["tipo_transaccion"] == "Venta").sum() if len(props_ciudad) > 0 else 0
+        )
+        alquileres_n = (
+            (props_ciudad["tipo_transaccion"] == "Alquiler").sum() if len(props_ciudad) > 0 else 0
+        )
 
         grupo = folium.FeatureGroup(
-            name=f"📍 {ciudad} ({n_clusters} zonas | {ventas_n}V + {alquileres_n}A)",
-            show=True
+            name=f"📍 {ciudad} ({n_clusters} zonas | {ventas_n}V + {alquileres_n}A)", show=True
         )
 
         # Puntos — color según tipo de transacción
         if len(props_ciudad) > 0:
             for _, row in props_ciudad.iterrows():
                 es_alquiler = row.get("tipo_transaccion") == "Alquiler"
-                cid         = int(row["cluster_id"])
-                color_base  = COLORES_HEX[cid % len(COLORES_HEX)]
+                cid = int(row["cluster_id"])
+                color_base = COLORES_HEX[cid % len(COLORES_HEX)]
 
                 folium.CircleMarker(
                     location=[row["latitude"], row["longitude"]],
@@ -191,15 +190,14 @@ def generar_mapa(df_centroides: pd.DataFrame, df_props: pd.DataFrame) -> folium.
 
         # Centroides
         for _, row in cents_ciudad.iterrows():
-            cid        = int(row["cluster_id"])
+            cid = int(row["cluster_id"])
             color_icon = COLORES_ICONOS[cid % len(COLORES_ICONOS)]
-            total      = int(row["total_propiedades"])
+            total = int(row["total_propiedades"])
 
             folium.Marker(
                 location=[row["centroide_lat"], row["centroide_lng"]],
                 popup=folium.Popup(
-                    f"<b>{ciudad}</b><br>Zona {cid}<br>Propiedades: {total}",
-                    max_width=200
+                    f"<b>{ciudad}</b><br>Zona {cid}<br>Propiedades: {total}", max_width=200
                 ),
                 tooltip=f"{ciudad} — Zona {cid} ({total} props)",
                 icon=folium.Icon(color=color_icon, icon="home"),
@@ -238,13 +236,14 @@ def generar_mapa(df_centroides: pd.DataFrame, df_props: pd.DataFrame) -> folium.
     mapa.get_root().html.add_child(folium.Element(titulo))
     return mapa
 
+
 # ------------------------------------------------------------
 # Main
 # ------------------------------------------------------------
 if __name__ == "__main__":
-    log.info("="*55)
+    log.info("=" * 55)
     log.info("INTRAMAX — Visualizador Clusters Multiciudad")
-    log.info("="*55)
+    log.info("=" * 55)
 
     crm_engine = get_crm_engine()
 
@@ -252,7 +251,7 @@ if __name__ == "__main__":
     df_centroides = cargar_centroides()
 
     if df_centroides.empty:
-        log.error("No hay clusters. Corré setup_clusters.py primero.")
+        log.error("No hay clusters. Corré: python -m etl.clustering.setup_clusters")
         sys.exit(1)
 
     log.info("\nCargando propiedades desde CRM...")

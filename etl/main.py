@@ -1,87 +1,146 @@
+"""Punto de entrada del pipeline ETL de INTRAMAX."""
+
+from __future__ import annotations
+
+import argparse
 import logging
-import os
 import sys
-from datetime import datetime
+from dataclasses import dataclass
+from pathlib import Path
+from time import perf_counter
 
-from extractor import extraer_datos_crm
-from cleaner import limpiar_datos
-from transformer import transformar_datos
-from loader import cargar_datos, generar_dataset_entrenable
+import pandas as pd
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
-)
+from .cleaner import limpiar_datos
+from .extractor import extraer_datos_crm
+from .loader import cargar_datos, generar_dataset_entrenable
+from .transformer import transformar_datos
+
 log = logging.getLogger(__name__)
 
 
-def run_pipeline():
-    inicio = datetime.now()
-    log.info("=" * 50)
+@dataclass(frozen=True)
+class PipelineResult:
+    extraidos: int
+    limpios: int
+    excluidos: int
+    insertados: int
+    actualizados: int
+    duracion_segundos: float
+
+
+def configurar_logging() -> None:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[logging.StreamHandler(sys.stdout)],
+    )
+
+
+def guardar_reporte_exclusiones(
+    df_excluidos: pd.DataFrame,
+    directorio: Path = Path("data"),
+) -> None:
+    """Guarda detalle por propiedad y un resumen por motivo."""
+
+    if df_excluidos.empty:
+        return
+
+    directorio.mkdir(parents=True, exist_ok=True)
+    contexto = [
+        "mlsid",
+        "subtipo_original",
+        "tipo_propiedad",
+        "segmento",
+        "tipo_transaccion",
+    ]
+    agregaciones = {columna: "first" for columna in contexto}
+    agregaciones["motivo"] = lambda valores: ", ".join(sorted(set(valores)))
+    detalle = (
+        df_excluidos.groupby("id_propiedad", dropna=False, as_index=False)
+        .agg(agregaciones)
+        .rename(columns={"motivo": "motivos"})
+    )
+    detalle.to_csv(directorio / "captaciones_excluidas.csv", index=False)
+
+    resumen = (
+        df_excluidos.drop_duplicates(subset=["id_propiedad", "motivo"])["motivo"]
+        .value_counts()
+        .rename_axis("motivo")
+        .reset_index(name="total")
+    )
+    resumen.to_csv(directorio / "captaciones_excluidas_resumen.csv", index=False)
+    log.info("  → Reportes de exclusión guardados en %s", directorio)
+
+
+def run_pipeline(exportar_datasets: bool = False) -> PipelineResult:
+    """Ejecuta extracción, limpieza, transformación y carga."""
+
+    inicio = perf_counter()
+    log.info("%s", "=" * 50)
     log.info("INTRAMAX ETL — Iniciando pipeline")
-    log.info("=" * 50)
+    log.info("%s", "=" * 50)
 
+    log.info("PASO 1: Extrayendo datos del CRM...")
+    df_raw = extraer_datos_crm()
+    if df_raw.empty:
+        raise RuntimeError("El CRM no devolvió registros; se canceló la carga")
+    log.info("  → %s registros extraídos", len(df_raw))
+
+    log.info("PASO 2: Limpiando datos...")
+    df_clean, df_excluidos = limpiar_datos(df_raw)
+    guardar_reporte_exclusiones(df_excluidos)
+    if df_clean.empty:
+        raise RuntimeError("Todos los registros fueron excluidos durante la limpieza")
+    log.info("  → %s registros después de limpieza", len(df_clean))
+
+    log.info("PASO 3: Transformando y calculando features...")
+    df_final = transformar_datos(df_clean)
+    log.info("  → %s registros listos para carga", len(df_final))
+
+    log.info("PASO 4: Cargando a PostgreSQL...")
+    insertados, actualizados = cargar_datos(df_final)
+    log.info("  → %s insertados, %s actualizados", insertados, actualizados)
+
+    if exportar_datasets:
+        log.info("PASO 5: Generando datasets entrenables...")
+        total_entrenable = generar_dataset_entrenable(df_final)
+        log.info("  → %s operaciones exportadas", total_entrenable)
+
+    duracion = perf_counter() - inicio
+    log.info("%s", "=" * 50)
+    log.info("ETL completado exitosamente en %.2f segundos", duracion)
+    log.info("%s", "=" * 50)
+    return PipelineResult(
+        extraidos=len(df_raw),
+        limpios=len(df_clean),
+        excluidos=df_excluidos["id_propiedad"].nunique(dropna=False),
+        insertados=insertados,
+        actualizados=actualizados,
+        duracion_segundos=duracion,
+    )
+
+
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Ejecuta el pipeline analítico INTRAMAX")
+    parser.add_argument(
+        "--exportar-datasets",
+        action="store_true",
+        help="genera archivos Parquet para entrenamiento al finalizar",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv: list[str] | None = None) -> int:
+    configurar_logging()
+    args = parse_args(argv)
     try:
-        # Paso 1 — Extracción
-        log.info("PASO 1: Extrayendo datos del CRM...")
-        df_raw = extraer_datos_crm()
-        log.info(f"  → {len(df_raw)} registros extraídos")
-
-        # Paso 2 — Limpieza
-        log.info("PASO 2: Limpiando datos...")
-        df_clean, df_excluidos = limpiar_datos(df_raw)
-        if not df_excluidos.empty:
-            os.makedirs("data", exist_ok=True)
-
-            # Detalle — una fila por propiedad con todos sus motivos
-            detalle = (
-                df_excluidos
-                .groupby(["id_propiedad", "mlsid", "subtipo_original",
-                          "tipo_propiedad", "tipo_transaccion"])["motivo"]
-                .apply(lambda motivos: ", ".join(sorted(set(motivos))))
-                .reset_index()
-                .rename(columns={"motivo": "motivos"})
-            )
-            detalle.to_csv("data/captaciones_excluidas.csv", index=False)
-            log.info(f"  → Detalle guardado en data/captaciones_excluidas.csv")
-
-            # Resumen — propiedades únicas por motivo
-            resumen = (
-                df_excluidos
-                .drop_duplicates(subset=["id_propiedad", "motivo"])["motivo"]
-                .value_counts()
-                .reset_index()
-            )
-            resumen.columns = ["motivo", "total"]
-            resumen.to_csv("data/captaciones_excluidas_resumen.csv", index=False)
-            log.info(f"  → Resumen guardado en data/captaciones_excluidas_resumen.csv")
-        log.info(f"  → {len(df_clean)} registros después de limpieza")
-
-        # Paso 3 — Transformación + features derivadas
-        log.info("PASO 3: Transformando y calculando features...")
-        df_final = transformar_datos(df_clean)
-        log.info(f"  → {len(df_final)} registros listos para carga")
-
-        # Paso 4 — Carga a PostgreSQL
-        log.info("PASO 4: Cargando a PostgreSQL...")
-        insertados, actualizados = cargar_datos(df_final)
-        log.info(f"  → {insertados} insertados, {actualizados} actualizados")
-
-        # Paso 5 — Dataset entrenable
-        # log.info("PASO 5: Generando dataset entrenable...")
-        # total_entrenable = generar_dataset_entrenable(df_final)
-        # log.info(f"  → {total_entrenable} propiedades vendidas exportadas")
-
-        # duracion = (datetime.now() - inicio).seconds
-        # log.info("=" * 50)
-        # log.info(f"ETL completado exitosamente en {duracion} segundos")
-        # log.info("=" * 50)
-
-    except Exception as e:
-        log.error(f"ETL falló: {e}", exc_info=True)
-        sys.exit(1)
+        run_pipeline(exportar_datasets=args.exportar_datasets)
+    except Exception:
+        log.exception("ETL falló")
+        return 1
+    return 0
 
 
 if __name__ == "__main__":
-    run_pipeline()
+    raise SystemExit(main())

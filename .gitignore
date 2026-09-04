@@ -5,3 +5,6 @@ __pycache__/
 cache/
 data/
 .codegraph
+.pytest_cache/
+.ruff_cache/
+.coverage

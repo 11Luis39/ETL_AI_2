@@ -1,21 +1,20 @@
 import logging
-import sys
 import os
-import pandas as pd
-import numpy as np
-import joblib
+import sys
 from datetime import datetime
-from sklearn.model_selection import train_test_split
-from sklearn.metrics import mean_absolute_error, mean_squared_error
-from xgboost import XGBRegressor
-from dotenv import load_dotenv
+from pathlib import Path
 
-load_dotenv()
+import joblib
+import numpy as np
+import pandas as pd
+from sklearn.metrics import mean_absolute_error, mean_squared_error
+from sklearn.model_selection import train_test_split
+from xgboost import XGBRegressor
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger(__name__)
 
@@ -35,42 +34,57 @@ FEATURES_BASE = [
 ]
 
 FEATURES_POR_TIPO = {
-    "Casa":           FEATURES_BASE + ["estacionamientos"]+["m2_terreno"],
-    "Departamento":   FEATURES_BASE + ["estacionamientos"],
-    "Terreno_urbano": ["cluster_zona", "m2_terreno", "mes_publicacion",
-                       "ratio_activas_vendidas_zona", "diferencia_vs_promedio_zona"],
-    "Terreno_rural":  ["cluster_zona", "m2_terreno", "mes_publicacion",
-                       "ratio_activas_vendidas_zona"],
+    "Casa": FEATURES_BASE + ["estacionamientos"] + ["m2_terreno"],
+    "Departamento": FEATURES_BASE + ["estacionamientos"],
+    "Terreno_urbano": [
+        "cluster_zona",
+        "m2_terreno",
+        "mes_publicacion",
+        "ratio_activas_vendidas_zona",
+        "diferencia_vs_promedio_zona",
+    ],
+    "Terreno_rural": [
+        "cluster_zona",
+        "m2_terreno",
+        "mes_publicacion",
+        "ratio_activas_vendidas_zona",
+    ],
 }
 
 TARGET_POR_TIPO = {
-    "Casa":           "precio_venta",
-    "Departamento":   "precio_venta",
+    "Casa": "precio_venta",
+    "Departamento": "precio_venta",
     "Terreno_urbano": "precio_m2",
-    "Terreno_rural":  "precio_m2",
+    "Terreno_rural": "precio_m2",
 }
 
 TIPOS_MVP = ["Casa", "Departamento", "Terreno_urbano", "Terreno_rural"]
 
+
 # ------------------------------------------------------------
 # Cargar dataset
 # ------------------------------------------------------------
-def cargar_dataset() -> pd.DataFrame:
-    ruta = "data/dataset_entrenable.parquet"
+def cargar_dataset(ruta: Path = Path("data/dataset_ventas.parquet")) -> pd.DataFrame:
+    """Carga el dataset de ventas generado por ``etl.main --exportar-datasets``."""
+
+    if not ruta.exists():
+        raise FileNotFoundError(
+            f"No se encontró {ruta}. Ejecutá primero: python -m etl.main --exportar-datasets"
+        )
     df = pd.read_parquet(ruta)
     log.info(f"Dataset cargado: {len(df)} registros")
 
     df = df[df["precio_venta"].notna()].copy()
     df = df[df["tiempo_en_mercado"].notna()].copy()
 
-    # Segmentar Terreno en urbano y rural
-    def clasificar_terreno(row):
-        if row["tipo_propiedad"] != "Terreno":
-            return row["tipo_propiedad"]
-        m2 = row.get("m2_terreno", 0) or 0
-        return "Terreno_urbano" if m2 <= 1000 else "Terreno_rural"
-
-    df["tipo_propiedad"] = df.apply(clasificar_terreno, axis=1)
+    # Segmentar terrenos sin recorrer el DataFrame fila por fila.
+    es_terreno = df["tipo_propiedad"].eq("Terreno")
+    superficie = pd.to_numeric(df["m2_terreno"], errors="coerce").fillna(0)
+    df.loc[es_terreno, "tipo_propiedad"] = np.where(
+        superficie.loc[es_terreno].le(1_000),
+        "Terreno_urbano",
+        "Terreno_rural",
+    )
     df = df[df["tipo_propiedad"].isin(TIPOS_MVP)].copy()
 
     log.info(f"Dataset filtrado: {len(df)} registros para entrenamiento")
@@ -82,13 +96,14 @@ def cargar_dataset() -> pd.DataFrame:
 
     return df
 
+
 # ------------------------------------------------------------
 # Entrenar modelo por tipo
 # ------------------------------------------------------------
 def entrenar_modelo_tipo(df: pd.DataFrame, tipo: str):
-    log.info(f"\n{'='*50}")
+    log.info(f"\n{'=' * 50}")
     log.info(f"Entrenando modelo: {tipo}")
-    log.info(f"{'='*50}")
+    log.info(f"{'=' * 50}")
 
     df_tipo = df[df["tipo_propiedad"] == tipo].copy()
     features = FEATURES_POR_TIPO[tipo]
@@ -111,10 +126,14 @@ def entrenar_modelo_tipo(df: pd.DataFrame, tipo: str):
     log.info(f"Registros con target válido: {len(X)}")
 
     # Convertir columnas a numérico y rellenar nulos con mediana
+    medianas = {}
     for col in X.columns:
         X[col] = pd.to_numeric(X[col], errors="coerce")
+        mediana = X[col].median()
+        if pd.isna(mediana):
+            mediana = 0.0
+        medianas[col] = float(mediana)
         if X[col].isna().any():
-            mediana = X[col].median()
             X[col] = X[col].fillna(mediana)
             log.info(f"  Nulos en '{col}' rellenados con mediana: {mediana:.2f}")
 
@@ -129,12 +148,12 @@ def entrenar_modelo_tipo(df: pd.DataFrame, tipo: str):
             antes_max = X[col].max()
             X[col] = X[col].clip(lower=min_val, upper=max_val)
             if antes_min < min_val or antes_max > max_val:
-                log.info(f"  Clamp '{col}': [{antes_min:.2f}, {antes_max:.2f}] → [{min_val}, {max_val}]")
+                log.info(
+                    f"  Clamp '{col}': [{antes_min:.2f}, {antes_max:.2f}] → [{min_val}, {max_val}]"
+                )
 
     # Split train/test 80-20
-    X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42
-    )
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
     log.info(f"Train: {len(X_train)} | Test: {len(X_test)}")
 
     # Modelo XGBoost
@@ -149,59 +168,71 @@ def entrenar_modelo_tipo(df: pd.DataFrame, tipo: str):
     )
 
     modelo.fit(
-        X_train, y_train,
+        X_train,
+        y_train,
         eval_set=[(X_test, y_test)],
         verbose=False,
     )
 
     # Métricas
     y_pred = modelo.predict(X_test)
-    mae    = mean_absolute_error(y_test, y_pred)
-    rmse   = np.sqrt(mean_squared_error(y_test, y_pred))
-    mape   = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
+    mae = mean_absolute_error(y_test, y_pred)
+    rmse = np.sqrt(mean_squared_error(y_test, y_pred))
+    mape = np.mean(np.abs((y_test - y_pred) / y_test)) * 100
 
     log.info(f"  MAE:  {mae:,.2f}")
     log.info(f"  RMSE: {rmse:,.2f}")
     log.info(f"  MAPE: {mape:.2f}%")
 
     if mape <= 12:
-        log.info(f"  ✅ Meta cumplida (MAPE ≤ 12%)")
+        log.info("  ✅ Meta cumplida (MAPE ≤ 12%)")
     else:
-        log.info(f"  ⚠️  Meta no cumplida (MAPE > 12%) — se puede mejorar con más datos")
+        log.info("  ⚠️  Meta no cumplida (MAPE > 12%) — se puede mejorar con más datos")
 
     # Importancia de features
-    log.info(f"  Importancia de features:")
+    log.info("  Importancia de features:")
     importancias = pd.Series(modelo.feature_importances_, index=features)
     for feat, imp in importancias.sort_values(ascending=False).items():
         log.info(f"    {feat}: {imp:.4f}")
 
-    return modelo, features, {
-        "tipo": tipo,
-        "registros": len(df_tipo),
-        "mae": mae,
-        "rmse": rmse,
-        "mape": mape,
-    }
+    return (
+        modelo,
+        features,
+        medianas,
+        {
+            "tipo": tipo,
+            "registros": len(df_tipo),
+            "mae": mae,
+            "rmse": rmse,
+            "mape": mape,
+        },
+    )
+
 
 # ------------------------------------------------------------
 # Guardar modelos
 # ------------------------------------------------------------
-def guardar_modelo(modelo, features: list, tipo: str):
+def guardar_modelo(modelo, features: list, medianas: dict, tipo: str):
     os.makedirs("data/modelos", exist_ok=True)
     nombre = tipo.lower().replace(" ", "_")
-    ruta   = f"data/modelos/precio_{nombre}.joblib"
+    ruta = f"data/modelos/precio_{nombre}.joblib"
 
-    joblib.dump({
-        "modelo":   modelo,
-        "features": features,
-        "tipo":     tipo,
-        "target":   TARGET_POR_TIPO.get(tipo, "precio_venta"),
-        "fecha":    datetime.now().isoformat(),
-        "version":  "1.0.0",
-    }, ruta)
+    joblib.dump(
+        {
+            "modelo": modelo,
+            "features": features,
+            "medianas": medianas,
+            "tipo": tipo,
+            "target": TARGET_POR_TIPO.get(tipo, "precio_venta"),
+            "fecha": datetime.now().isoformat(),
+            "version": "1.0.0",
+        },
+        ruta,
+    )
 
     log.info(f"  Modelo guardado: {ruta}")
     return ruta
+
 
 # ------------------------------------------------------------
 # Main
@@ -218,14 +249,14 @@ if __name__ == "__main__":
             log.warning(f"  {tipo}: solo {len(df_tipo)} registros, saltando...")
             continue
 
-        modelo, features, metricas = entrenar_modelo_tipo(df, tipo)
-        guardar_modelo(modelo, features, tipo)
+        modelo, features, medianas, metricas = entrenar_modelo_tipo(df, tipo)
+        guardar_modelo(modelo, features, medianas, tipo)
         resultados.append(metricas)
 
     # Resumen final
-    log.info(f"\n{'='*50}")
+    log.info(f"\n{'=' * 50}")
     log.info("RESUMEN FINAL")
-    log.info(f"{'='*50}")
+    log.info(f"{'=' * 50}")
     for r in resultados:
         log.info(
             f"  {r['tipo']:15} | "

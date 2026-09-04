@@ -3,9 +3,9 @@ services:
     image: postgres:15
     container_name: intramax_postgres
     environment:
-      POSTGRES_DB: intramax_ia
-      POSTGRES_USER: intramax
-      POSTGRES_PASSWORD: intramax123
+      POSTGRES_DB: ${PG_DATABASE:-intramax_ia}
+      POSTGRES_USER: ${PG_USERNAME:-intramax}
+      POSTGRES_PASSWORD: ${PG_PASSWORD:-intramax123}
     ports:
       - "5433:5432"
     volumes:
@@ -13,6 +13,11 @@ services:
       - ./db/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - intramax_net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   etl:
     build:
@@ -20,8 +25,12 @@ services:
       dockerfile: Dockerfile.etl
     container_name: intramax_etl
     env_file: .env
+    environment:
+      PG_HOST: postgres_analitico
+      PG_PORT: 5432
     depends_on:
-      - postgres_analitico
+      postgres_analitico:
+        condition: service_healthy
     networks:
       - intramax_net
     extra_hosts:

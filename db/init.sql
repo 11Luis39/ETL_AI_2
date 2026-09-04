@@ -59,11 +59,11 @@ CREATE TABLE IF NOT EXISTS property_analytics (
     estacionamientos            SMALLINT,
     antiguedad                  SMALLINT,
 
-    -- Precios
-    precio_publicacion          NUMERIC(15,2),
-    precio_venta                NUMERIC(15,2),      -- solo Venta
-    precio_alquiler_mes         NUMERIC(15,2),      -- solo Alquiler (BOB/mes)
-    precio_m2                   NUMERIC(10,2),
+    -- Precios en dólares estadounidenses (USD)
+    precio_publicacion          NUMERIC(15,2),      -- USD
+    precio_venta                NUMERIC(15,2),      -- USD, solo Venta
+    precio_alquiler_mes         NUMERIC(15,2),      -- USD/mes, solo Alquiler
+    precio_m2                   NUMERIC(10,2),      -- USD/m²
 
     -- Métricas de mercado
     tiempo_en_mercado           SMALLINT,
@@ -87,7 +87,7 @@ CREATE TABLE IF NOT EXISTS property_analytics (
     CONSTRAINT fk_cluster_ciudad
         FOREIGN KEY (cluster_zona, ciudad)
         REFERENCES zona_clusters(cluster_id, ciudad)
-        ON DELETE SET NULL
+        ON DELETE SET NULL (cluster_zona)
         DEFERRABLE INITIALLY DEFERRED
 );
 
@@ -111,6 +111,7 @@ CREATE TABLE IF NOT EXISTS prediction_logs (
     pais                        VARCHAR(50)     DEFAULT 'Bolivia',
     tipo_transaccion            VARCHAR(20)     DEFAULT 'Venta',
 
+    -- Todos los importes de predicción están expresados en USD
     precio_input                NUMERIC(15,2)   NOT NULL,
     tipo_propiedad_input        VARCHAR(30),
     m2_input                    NUMERIC(10,2),

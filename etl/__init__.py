@@ -1,0 +1,1 @@
+"""Pipeline analítico de INTRAMAX."""

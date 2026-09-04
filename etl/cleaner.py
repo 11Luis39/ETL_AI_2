@@ -1,364 +1,282 @@
+"""Reglas de limpieza y registro de propiedades excluidas."""
+
+from __future__ import annotations
+
 import logging
-import pandas as pd
+from collections.abc import Mapping
+
 import numpy as np
-from datetime import date
+import pandas as pd
 
 log = logging.getLogger(__name__)
 
 
-# Mapeo de subtipos → grupos
 TIPO_PROPIEDAD_MAP = {
-    "Casa":                             "Casa", #161
-    "Casa de Calidad":                  "Casa", #42
-    "Casa de Campo":                    "Casa", #229
-    "Casa con Espacio Comercial":       "Casa", #228
-    "Departamento":                     "Departamento", #131
-    "Dúplex":                           "Departamento", #133
-    "Penthouse":                        "Departamento", #190
-    "Estudio/Monoambiente":             "Departamento", #140
-    "Condominio / Departamento":        "Departamento", #174
-    "Apartamento con servicio de hotel":"Departamento", #162
-    "Local Comercial":                  "Local Comercial",
-    "Comercial/Negocio":                "Local Comercial",
-    "Oficina":                          "Oficina",
-    "Baulera":                          "Otro",
-    "Clínica de salud":                 "Otro",
-    "Edificio":                         "Otro",
-    "Edificio de apartamentos entero":  "Otro",
-    "Edificio/Construcción":            "Otro",
-    "Galpon":                           "Otro",
-    "Garaje/Baulera":                   "Otro",
-    "Hotel/Edificio de apartamentos":   "Otro",
-    "Quinta":                           "Otro",
-    "Otros":                            "Otro",
-    "Propiedad Agrícola/Ganadera":      "Propiedad Agrícola/Ganadera",
-    "Terreno":                          "Terreno", #101
-    "Terreno Comercial":                "Terreno", #110
+    "Casa": "Casa",
+    "Casa de Calidad": "Casa",
+    "Casa de Campo": "Casa",
+    "Casa con Espacio Comercial": "Casa",
+    "Departamento": "Departamento",
+    "Dúplex": "Departamento",
+    "Penthouse": "Departamento",
+    "Estudio/Monoambiente": "Departamento",
+    "Condominio / Departamento": "Departamento",
+    "Apartamento con servicio de hotel": "Departamento",
+    "Local Comercial": "Local Comercial",
+    "Comercial/Negocio": "Local Comercial",
+    "Oficina": "Oficina",
+    "Baulera": "Otro",
+    "Clínica de salud": "Otro",
+    "Edificio": "Otro",
+    "Edificio de apartamentos entero": "Otro",
+    "Edificio/Construcción": "Otro",
+    "Galpon": "Otro",
+    "Garaje/Baulera": "Otro",
+    "Hotel/Edificio de apartamentos": "Otro",
+    "Quinta": "Otro",
+    "Otros": "Otro",
+    "Propiedad Agrícola/Ganadera": "Propiedad Agrícola/Ganadera",
+    "Terreno": "Terreno",
+    "Terreno Comercial": "Terreno",
 }
 
-# Campos requeridos por tipo
 CAMPOS_REQUERIDOS = {
-    "Casa":         ["construction_area_m", "land_m2", "dormitorios", "banos"],
-    "Departamento": ["construction_area_m", "dormitorios", "banos"],
-    "Terreno":      ["total_area"],
+    "Casa": ("construction_area_m", "land_m2", "dormitorios", "banos"),
+    "Departamento": ("construction_area_m", "dormitorios", "banos"),
+    "Terreno": ("total_area",),
 }
 
-# Precio mínimo en BOB por tipo — VENTA
-# PRECIO_MINIMO_VENTA = {
-#     "Casa":                        50000,
-#     "Departamento":                30000,
-#     "Terreno":                     10000,
-#     "Local Comercial":             20000,
-#     "Oficina":                     20000,
-#     "Otro":                        10000,
-#     "Propiedad Agrícola/Ganadera": 10000,
-# }
+ETIQUETAS_CAMPOS = {
+    "construction_area_m": "m2_construidos nulo o menor/igual a 0",
+    "land_m2": "m2_terreno nulo o menor/igual a 0",
+    "total_area": "m2_total nulo o menor/igual a 0",
+    "dormitorios": "dormitorios nulo o menor/igual a 0",
+    "banos": "baños nulo o menor/igual a 0",
+}
 
-PRECIO_MINIMO_VENTA = {
-    "Casa":                        7200,   # 50000 / 6.96
-    "Departamento":                4300,   # 30000 / 6.96
-    "Terreno":                     1500,   # 10000 / 6.96
-    "Local Comercial":             2900,   # 20000 / 6.96
-    "Oficina":                     2900,
-    "Otro":                        1500,
+# Todos los importes del CRM están expresados en dólares estadounidenses (USD).
+PRECIO_MINIMO_VENTA_USD = {
+    "Casa": 7200,
+    "Departamento": 4300,
+    "Terreno": 1500,
+    "Local Comercial": 2900,
+    "Oficina": 2900,
+    "Otro": 1500,
     "Propiedad Agrícola/Ganadera": 1500,
 }
 
-# Precio mínimo en BOB/mes por tipo — ALQUILER
-# PRECIO_MINIMO_ALQUILER = {
-#     "Casa":                         500,
-#     "Departamento":                 800,
-#     "Local Comercial":              500,
-#     "Oficina":                      500,
-#     "Otro":                         500,
-#     "Propiedad Agrícola/Ganadera":  500,
-# }
-
-PRECIO_MINIMO_ALQUILER = {
-    "Casa":                         72,   # 500 / 6.96
-    "Departamento":                115,   # 800 / 6.96
-    "Local Comercial":              72,
-    "Oficina":                      72,
-    "Otro":                         72,
-    "Propiedad Agrícola/Ganadera":  72,
+PRECIO_MINIMO_ALQUILER_USD = {
+    "Casa": 72,
+    "Departamento": 115,
+    "Local Comercial": 72,
+    "Oficina": 72,
+    "Otro": 72,
+    "Propiedad Agrícola/Ganadera": 72,
 }
 
+COLUMNAS_REQUERIDAS = {
+    "id_propiedad",
+    "mlsid",
+    "subtipo_original",
+    "tipo_transaccion",
+    "latitude",
+    "longitude",
+    "construction_area_m",
+    "total_area",
+    "land_m2",
+    "dormitorios",
+    "banos",
+    "precio_publicacion",
+    "precio_cierre",
+}
 
-def _generar_motivos_exclusion(row: pd.Series) -> list:
-    tipo   = row.get("tipo_propiedad", "Otro")
-    campos = CAMPOS_REQUERIDOS.get(tipo, [])
+COLUMNAS_EXCLUSION = [
+    "id_propiedad",
+    "mlsid",
+    "subtipo_original",
+    "tipo_propiedad",
+    "segmento",
+    "tipo_transaccion",
+    "motivo",
+]
 
-    LABELS = {
-        "construction_area_m": "m2_construidos nulo o 0",
-        "land_m2":             "m2_terreno nulo o 0",
-        "total_area":          "m2_total nulo o 0",
-        "dormitorios":         "dormitorios nulo o 0",
-        "banos":               "baños nulo o 0",
-    }
 
-    return [
-        LABELS.get(campo, f"{campo} inválido")
-        for campo in campos
-        if (lambda v: v is None or (isinstance(v, float) and np.isnan(v)) or v == 0)(row.get(campo))
-    ]
+def _exclusiones(
+    df: pd.DataFrame,
+    mask: pd.Series,
+    motivo: str | pd.Series,
+) -> pd.DataFrame:
+    """Construye un reporte uniforme para las filas marcadas."""
 
-def _filtrar_por_campos_requeridos(df: pd.DataFrame):
-    excluidos = []
-    validos   = []
+    if not mask.any():
+        return pd.DataFrame(columns=COLUMNAS_EXCLUSION)
 
-    for _, row in df.iterrows():
-        motivos = _generar_motivos_exclusion(row)
-        if motivos:
-                    for motivo in motivos:
-                        excluidos.append({
-                            "id_propiedad":     row.get("id_propiedad"),
-                            "mlsid":            row.get("mlsid"),
-                            "subtipo_original": row.get("subtipo_original"),
-                            "tipo_propiedad":   row.get("tipo_propiedad"),
-                            "tipo_transaccion": row.get("tipo_transaccion"),
-                            "motivo":           motivo,
-                        })
-        else:
-            validos.append(row)
+    resultado = df.loc[mask].reindex(columns=COLUMNAS_EXCLUSION[:-1]).copy()
+    if isinstance(motivo, pd.Series):
+        resultado["motivo"] = motivo.loc[mask].to_numpy()
+    else:
+        resultado["motivo"] = motivo
+    return resultado.reset_index(drop=True)
 
-    df_valido    = pd.DataFrame(validos).reset_index(drop=True) if validos else df.iloc[0:0]
-    df_excluidos = pd.DataFrame(excluidos)
-    return df_valido, df_excluidos
 
-def limpiar_datos(df: pd.DataFrame):
+def _valor_no_positivo(serie: pd.Series) -> pd.Series:
+    numerica = pd.to_numeric(serie, errors="coerce")
+    return numerica.isna() | numerica.le(0)
+
+
+def _filtrar_por_campos_requeridos(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Excluye filas inválidas sin recorrer el DataFrame fila por fila."""
+
+    invalida = pd.Series(False, index=df.index)
+    exclusiones: list[pd.DataFrame] = []
+
+    for tipo, campos in CAMPOS_REQUERIDOS.items():
+        es_tipo = df["tipo_propiedad"].eq(tipo)
+        for campo in campos:
+            mask = es_tipo & _valor_no_positivo(df[campo])
+            invalida |= mask
+            exclusiones.append(_exclusiones(df, mask, ETIQUETAS_CAMPOS[campo]))
+
+    detalle = pd.concat(exclusiones, ignore_index=True)
+    return df.loc[~invalida].copy(), detalle
+
+
+def _asignar_superficies(df: pd.DataFrame) -> pd.DataFrame:
+    """Normaliza las superficies usadas por cada familia de propiedad."""
+
+    df = df.copy()
+    es_casa = df["tipo_propiedad"].eq("Casa")
+    es_departamento = df["tipo_propiedad"].eq("Departamento")
+    es_terreno = df["tipo_propiedad"].eq("Terreno")
+
+    df["m2_construidos"] = np.select(
+        [es_casa | es_departamento, es_terreno],
+        [pd.to_numeric(df["construction_area_m"], errors="coerce"), 0],
+        default=np.nan,
+    )
+    terreno_reportado = pd.to_numeric(df["land_m2"], errors="coerce")
+    df["m2_terreno"] = np.select(
+        [es_casa, es_departamento, es_terreno],
+        [
+            terreno_reportado,
+            terreno_reportado.where(terreno_reportado.gt(0), np.nan),
+            pd.to_numeric(df["total_area"], errors="coerce"),
+        ],
+        default=np.nan,
+    )
+    return df
+
+
+def _filtrar_precios_minimos(
+    df: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    venta = df["tipo_propiedad"].map(PRECIO_MINIMO_VENTA_USD)
+    alquiler = df["tipo_propiedad"].map(PRECIO_MINIMO_ALQUILER_USD)
+    minimo = venta.where(df["tipo_transaccion"].eq("Venta"), alquiler)
+    precio = pd.to_numeric(df["precio_publicacion"], errors="coerce")
+    mask = minimo.notna() & (precio.isna() | precio.lt(minimo))
+    motivos = pd.Series(
+        np.where(
+            df["tipo_transaccion"].eq("Venta"),
+            "precio menor al mínimo de venta",
+            "precio menor al mínimo de alquiler",
+        ),
+        index=df.index,
+    )
+    return df.loc[~mask].copy(), _exclusiones(df, mask, motivos)
+
+
+def limpiar_datos(df: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Limpia propiedades y devuelve también el detalle de exclusiones."""
+
+    if df.empty:
+        return df.copy(), pd.DataFrame(columns=COLUMNAS_EXCLUSION)
+
+    faltantes = sorted(COLUMNAS_REQUERIDAS.difference(df.columns))
+    if faltantes:
+        raise ValueError("Faltan columnas requeridas para limpiar: " + ", ".join(faltantes))
+
     total_inicial = len(df)
-    todos_excluidos = []
-
-    # 1 — Duplicados
-    mask_dup = df.duplicated(subset="id_propiedad", keep="last")
-    df_dup   = df[mask_dup].copy()
-    df       = df[~mask_dup]
-    log.info(f"  Duplicados eliminados: {mask_dup.sum()}")
-
-    # 2 — Sin coordenadas
-    sin_coords = df["latitude"].isna() | df["longitude"].isna()
-    df = df[~sin_coords]
-    log.info(f"  Sin coordenadas descartados: {sin_coords.sum()}")
-    
-    # 3 — Tipo de propiedad
+    df = df.copy()
     df["tipo_propiedad"] = df["subtipo_original"].map(TIPO_PROPIEDAD_MAP).fillna("Otro")
-    df_dup["tipo_propiedad"] = df_dup["subtipo_original"].map(TIPO_PROPIEDAD_MAP).fillna("Otro")
-    
-        # Registrar duplicados ahora que tipo_propiedad existe
-    for _, row in df_dup.iterrows():
-        todos_excluidos.append({
-            "id_propiedad":     row.get("id_propiedad"),
-            "mlsid":            row.get("mlsid"),
-            "subtipo_original": row.get("subtipo_original", ""),
-            "tipo_propiedad":   row.get("tipo_propiedad", ""),
-            "segmento":         row.get("segmento", ""),
-            "tipo_transaccion": row.get("tipo_transaccion", ""),
-            "motivo":           "duplicado",
-        })
+    reportes: list[pd.DataFrame] = []
 
+    sin_id = df["id_propiedad"].isna() | df["id_propiedad"].astype(str).str.strip().eq("")
+    reportes.append(_exclusiones(df, sin_id, "id_propiedad vacío"))
+    df = df.loc[~sin_id].copy()
 
-    # 4 — Calcular m2_construidos según tipo
-    # Casa        → construction_area_m (área ocupada)
-    # Departamento → construction_area_m (área ocupada)
-    # Terreno/resto → total_area (superficie total)
-    # es_depto_o_casa = df["subtipo_original"].isin([
-    #     "Departamento", "Dúplex", "Penthouse",
-    #     "Estudio/Monoambiente", "Condominio / Departamento",
-    #     "Apartamento con servicio de hotel",
-    #     "Casa", "Casa de Calidad", "Casa de Campo",
-    #     "Casa con Espacio Comercial",
-    # ])
-    # df["m2_construidos"] = np.where(
-    #     es_depto_o_casa,
-    #     df["construction_area_m"],
-    #     df["total_area"]
-    # )
-    
-    # 4 — Calcular m2 correctamente según tipo
+    duplicados = df.duplicated(subset="id_propiedad", keep="last")
+    reportes.append(_exclusiones(df, duplicados, "duplicado"))
+    df = df.loc[~duplicados].copy()
+    log.info("  Duplicados eliminados: %s", int(duplicados.sum()))
 
-    # Inicializar columnas
-    df["m2_construidos"] = np.nan
-    df["m2_terreno"]     = np.nan
+    latitude = pd.to_numeric(df["latitude"], errors="coerce")
+    longitude = pd.to_numeric(df["longitude"], errors="coerce")
+    sin_coordenadas = ~latitude.between(-90, 90) | ~longitude.between(-180, 180)
+    reportes.append(_exclusiones(df, sin_coordenadas, "coordenadas ausentes o inválidas"))
+    df = df.loc[~sin_coordenadas].copy()
+    log.info("  Sin coordenadas válidas descartados: %s", int(sin_coordenadas.sum()))
 
-    # 🏠 CASA
-    mask_casa = df["tipo_propiedad"] == "Casa"
-    df.loc[mask_casa, "m2_construidos"] = df.loc[mask_casa, "construction_area_m"]
-    df.loc[mask_casa, "m2_terreno"]     = df.loc[mask_casa, "land_m2"]
+    df = _asignar_superficies(df)
 
-    # 🏢 DEPARTAMENTO
-    mask_depto = df["tipo_propiedad"] == "Departamento"
-    df.loc[mask_depto, "m2_construidos"] = df.loc[mask_depto, "construction_area_m"]
-    df.loc[mask_depto, "m2_terreno"] = np.where(
-    df.loc[mask_depto, "land_m2"] > 0,
-    df.loc[mask_depto, "land_m2"],
-    np.nan
-    )
-    
-    # 🌱 TERRENO
-    mask_terreno = df["tipo_propiedad"] == "Terreno"
-    df.loc[mask_terreno, "m2_construidos"] = 0
-    df.loc[mask_terreno, "m2_terreno"]     = df.loc[mask_terreno, "total_area"]
-
-    mask_sin_m2 = (
-        (
-            df["tipo_propiedad"].isin(["Casa", "Departamento"]) &
-            (df["m2_construidos"] <= 0)
-        )
-        |
-        (
-            (df["tipo_propiedad"] == "Terreno") &
-            (df["m2_terreno"] <= 0)
-        )
-    )
-    
-    for _, row in df[mask_sin_m2].iterrows():
-        todos_excluidos.append({
-            "id_propiedad":     row.get("id_propiedad"),
-            "mlsid":            row.get("mlsid"),
-            "subtipo_original": row.get("subtipo_original"),
-            "tipo_propiedad":   row.get("tipo_propiedad", ""),
-            "tipo_transaccion": row.get("tipo_transaccion", ""),
-            "motivo":           "m2_construidos <= 0 o nulo",
-        })
-    df = df[~mask_sin_m2]
-    log.info(f"  Sin m2 válidos descartados: {mask_sin_m2.sum()}")
-
-
-
-    # 5 — Filtro por campos requeridos (una fila por motivo)
-    antes_filtro = len(df)
-    df, excluidos_campos = _filtrar_por_campos_requeridos(df)
-    todos_excluidos.extend(excluidos_campos.to_dict("records") if not excluidos_campos.empty else [])
-    log.info(f"  Excluidos por campos requeridos: {antes_filtro - len(df)}")
-
-    # 6 — Outliers
-    df, excluidos_outliers = _remover_outliers(df, "precio_publicacion")
-    todos_excluidos.extend(excluidos_outliers)
-    df, excluidos_outliers_m2 = _remover_outliers(df, "m2_construidos")
-    todos_excluidos.extend(excluidos_outliers_m2)
-
-    # 7 — Precio mínimo
     antes = len(df)
-    df_venta    = df[df["tipo_transaccion"] == "Venta"].copy()
-    df_alquiler = df[df["tipo_transaccion"] == "Alquiler"].copy()
+    df, campos_invalidos = _filtrar_por_campos_requeridos(df)
+    reportes.append(campos_invalidos)
+    log.info("  Excluidos por campos requeridos: %s", antes - len(df))
 
-    for tipo, precio_min in PRECIO_MINIMO_VENTA.items():
-        mask = (df_venta["tipo_propiedad"] == tipo) & (df_venta["precio_publicacion"] < precio_min)
-        for _, row in df_venta[mask].iterrows():
-            todos_excluidos.append({
-                "id_propiedad":     row.get("id_propiedad"),
-                "mlsid":            row.get("mlsid"),
-                "subtipo_original": row.get("subtipo_original"),
-                "tipo_propiedad":   row.get("tipo_propiedad"),
-                "tipo_transaccion": row.get("tipo_transaccion"),
-                "motivo":           "precio menor mínimo venta",
-            })
-        df_venta = df_venta[~mask]
+    df, outliers_precio = _remover_outliers(df, "precio_publicacion")
+    reportes.append(pd.DataFrame(outliers_precio, columns=COLUMNAS_EXCLUSION))
+    df, outliers_m2 = _remover_outliers(df, "m2_construidos")
+    reportes.append(pd.DataFrame(outliers_m2, columns=COLUMNAS_EXCLUSION))
 
-    for tipo, precio_min in PRECIO_MINIMO_ALQUILER.items():
-        mask = (df_alquiler["tipo_propiedad"] == tipo) & (df_alquiler["precio_publicacion"] < precio_min)
-        for _, row in df_alquiler[mask].iterrows():
-            todos_excluidos.append({
-                "id_propiedad":     row.get("id_propiedad"),
-                "mlsid":            row.get("mlsid"),
-                "subtipo_original": row.get("subtipo_original"),
-                "tipo_propiedad":   row.get("tipo_propiedad"),
-                "tipo_transaccion": row.get("tipo_transaccion"),
-                "motivo":           "precio menor mínimo alquiler",
-            })
-        df_alquiler = df_alquiler[~mask]
+    antes = len(df)
+    df, precios_bajos = _filtrar_precios_minimos(df)
+    reportes.append(precios_bajos)
+    log.info("  Precios mínimos eliminados: %s", antes - len(df))
 
-    df = pd.concat([df_venta, df_alquiler], ignore_index=True)
-    log.info(f"  Precios mínimos eliminados: {antes - len(df)}")
+    df_excluidos = pd.concat(reportes, ignore_index=True).reindex(columns=COLUMNAS_EXCLUSION)
 
-    # Resumen
-    df_excluidos = pd.DataFrame(todos_excluidos)
+    for transaccion, cantidad in df["tipo_transaccion"].value_counts().items():
+        log.info("  %s: %s registros", transaccion, cantidad)
 
-    for tipo_t in df["tipo_transaccion"].unique():
-        n = len(df[df["tipo_transaccion"] == tipo_t])
-        log.info(f"  {tipo_t}: {n} registros")
-
-    log.info(f"  Total después de limpieza: {len(df)} (removidos: {total_inicial - len(df)})")
-
+    log.info(
+        "  Total después de limpieza: %s (removidos: %s)",
+        len(df),
+        total_inicial - len(df),
+    )
     if not df_excluidos.empty:
-        log.info("Resumen exclusiones:")
-        resumen_log = (
-            df_excluidos
-            .drop_duplicates(subset=["id_propiedad", "motivo"])
-            ["motivo"]
+        resumen = (
+            df_excluidos.drop_duplicates(subset=["id_propiedad", "motivo"])["motivo"]
             .value_counts()
+            .to_string()
         )
-        log.info(resumen_log.to_string())
+        log.info("Resumen exclusiones:\n%s", resumen)
 
     return df.reset_index(drop=True), df_excluidos
 
-# def _remover_outliers(df, columna):
-#     resultado = []
-#     excluidos = []
 
-#     for (tipo, transaccion), grupo in df.groupby(["tipo_propiedad", "tipo_transaccion"]):
-#         media = grupo[columna].mean()
-#         std   = grupo[columna].std()
+def _remover_outliers(
+    df: pd.DataFrame,
+    columna: str,
+) -> tuple[pd.DataFrame, list[Mapping[str, object]]]:
+    """Quita valores fuera de tres desviaciones dentro de grupos comparables."""
 
-#         # ✅ Si std es NaN (grupo de 1 elemento), conservar todo el grupo
-#         if pd.isna(std) or std == 0:
-#             resultado.append(grupo)
-#             continue
+    if df.empty:
+        return df.copy(), []
 
-#         mask = (
-#             (grupo[columna] >= media - 3 * std) &
-#             (grupo[columna] <= media + 3 * std)
-#         )
+    columna_real = "precio_cierre" if columna == "precio_publicacion" else columna
+    etiqueta = "outlier precio_cierre" if columna == "precio_publicacion" else f"outlier {columna}"
+    valores = pd.to_numeric(df[columna_real], errors="coerce")
+    grupos = [df["tipo_propiedad"], df["tipo_transaccion"]]
+    conteo = valores.groupby(grupos).transform("count")
+    media = valores.groupby(grupos).transform("mean")
+    desviacion = valores.groupby(grupos).transform("std")
+    fuera_de_rango = valores.lt(media - 3 * desviacion) | valores.gt(media + 3 * desviacion)
+    mask = valores.notna() & conteo.ge(4) & desviacion.gt(0) & fuera_de_rango
 
-#         resultado.append(grupo[mask])
-
-#         excl = grupo[~mask].copy()
-#         excl["motivo"] = f"outlier {columna}"
-#         excluidos.append(excl)
-
-#     df_limpio    = pd.concat(resultado).reset_index(drop=True)
-#     df_excluidos = pd.concat(excluidos).reset_index(drop=True) if excluidos else pd.DataFrame()
-
-#     return df_limpio, df_excluidos
-
-def _remover_outliers(df: pd.DataFrame, columna: str):
-    antes     = len(df)
-    resultado = []
-    excluidos = []
-
-    # Para precio usamos precio_cierre (real de transacción), no precio_publicacion
-    col_real = "precio_cierre" if columna == "precio_publicacion" else columna
-    label    = "outlier precio_cierre" if columna == "precio_publicacion" else f"outlier {columna}"
-
-    for (tipo, transaccion), grupo in df.groupby(["tipo_propiedad", "tipo_transaccion"]):
-        serie = grupo[col_real].dropna()
-
-        if len(serie) < 4 or pd.isna(serie.std()) or serie.std() == 0:
-            resultado.append(grupo)
-            continue
-
-        media = serie.mean()
-        std   = serie.std()
-
-        mask_ok = (
-            grupo[col_real].isna() |
-            (
-                (grupo[col_real] >= media - 3 * std) &
-                (grupo[col_real] <= media + 3 * std)
-            )
-        )
-        resultado.append(grupo[mask_ok])
-
-        for _, row in grupo[~mask_ok].iterrows():
-            excluidos.append({
-                "id_propiedad":     row.get("id_propiedad"),
-                "mlsid":            row.get("mlsid"),
-                "subtipo_original": row.get("subtipo_original"),
-                "tipo_propiedad":   row.get("tipo_propiedad"),
-                "tipo_transaccion": row.get("tipo_transaccion"),
-                "motivo":           label,
-            })
-
-    df_limpio = pd.concat(resultado).reset_index(drop=True)
-    log.info(f"  Outliers en '{col_real}': {antes - len(df_limpio)} removidos")
-    return df_limpio, excluidos
+    detalle = _exclusiones(df, mask, etiqueta)
+    limpio = df.loc[~mask].copy().reset_index(drop=True)
+    log.info("  Outliers en '%s': %s removidos", columna_real, int(mask.sum()))
+    return limpio, detalle.to_dict("records")

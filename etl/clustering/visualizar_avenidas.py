@@ -1,66 +1,60 @@
+import logging
+import os
+import sys
+import webbrowser
+
 import folium
-from folium.plugins import MiniMap, Fullscreen
 import geopandas as gpd
 import pandas as pd
-import os
-import webbrowser
-import logging
-import sys
-from dotenv import load_dotenv
+from folium.plugins import Fullscreen, MiniMap
 
-load_dotenv()
+from etl.config import get_pg_engine
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
-    handlers=[logging.StreamHandler(sys.stdout)]
+    handlers=[logging.StreamHandler(sys.stdout)],
 )
 log = logging.getLogger(__name__)
 
 # Paleta de colores por categoría (debe coincidir con setup_avenidas.py)
 COLORES = {
-    "conexion_nacional":   "#DC2626",
+    "conexion_nacional": "#DC2626",
     "anillos_principales": "#EA580C",
-    "anillos_expansion":   "#F59E0B",
-    "primarias":           "#2563EB",
-    "plan_3000":           "#7C3AED",
-    "villa":               "#059669",
-    "pampa":               "#0891B2",
-    "zona_sur":            "#BE185D",
-    "alimentadoras":       "#65A30D",
-    "casco_viejo":         "#92400E",
-    "expansion":           "#6B7280",
+    "anillos_expansion": "#F59E0B",
+    "primarias": "#2563EB",
+    "plan_3000": "#7C3AED",
+    "villa": "#059669",
+    "pampa": "#0891B2",
+    "zona_sur": "#BE185D",
+    "alimentadoras": "#65A30D",
+    "casco_viejo": "#92400E",
+    "expansion": "#6B7280",
 }
 
 LABELS = {
-    "conexion_nacional":   "🛣️  Conexión Nacional/Regional",
+    "conexion_nacional": "🛣️  Conexión Nacional/Regional",
     "anillos_principales": "⭕ Anillos Principales (1ro–4to)",
-    "anillos_expansion":   "⭕ Anillos Expansión (5to–8vo)",
-    "primarias":           "🔵 Avenidas Primarias",
-    "plan_3000":           "🟣 Plan 3.000 (D-8)",
-    "villa":               "🟢 Villa 1ro de Mayo (D-7)",
-    "pampa":               "🔵 Pampa de la Isla (D-6)",
-    "zona_sur":            "🩷 Los Lotes / Zona Sur",
-    "alimentadoras":       "🟡 Alimentadoras Importantes",
-    "casco_viejo":         "🟤 Casco Viejo / Alto Valor",
-    "expansion":           "⚪ Vías de Expansión",
+    "anillos_expansion": "⭕ Anillos Expansión (5to–8vo)",
+    "primarias": "🔵 Avenidas Primarias",
+    "plan_3000": "🟣 Plan 3.000 (D-8)",
+    "villa": "🟢 Villa 1ro de Mayo (D-7)",
+    "pampa": "🔵 Pampa de la Isla (D-6)",
+    "zona_sur": "🩷 Los Lotes / Zona Sur",
+    "alimentadoras": "🟡 Alimentadoras Importantes",
+    "casco_viejo": "🟤 Casco Viejo / Alto Valor",
+    "expansion": "⚪ Vías de Expansión",
 }
 
 
 def cargar_clusters():
     """Carga los clusters de zonas desde PostgreSQL"""
     try:
-        from sqlalchemy import create_engine
-        import os as _os
-        url = (
-            f"postgresql+psycopg2://{_os.getenv('PG_USERNAME')}:{_os.getenv('PG_PASSWORD')}"
-            f"@{_os.getenv('PG_HOST')}:{_os.getenv('PG_PORT')}/{_os.getenv('PG_DATABASE')}"
-        )
-        engine = create_engine(url)
+        engine = get_pg_engine()
         with engine.connect() as conn:
             clusters = pd.read_sql(
                 "SELECT cluster_id, centroide_lat, centroide_lng, total_propiedades FROM zona_clusters",
-                conn
+                conn,
             )
         log.info(f"  → {len(clusters)} clusters cargados desde PostgreSQL")
         return clusters
@@ -104,7 +98,7 @@ def generar_leyenda_html(categorias_en_mapa: list) -> str:
         {items}
         <div style="margin-top:12px; padding-top:8px; border-top:1px solid #F3F4F6;
                     font-size:11px; color:#9CA3AF;">
-            Fuente: OpenStreetMap © 2025
+            Fuente: OpenStreetMap
         </div>
     </div>
     """
@@ -115,7 +109,7 @@ def generar_mapa():
 
     if not os.path.exists(ruta_vias):
         log.error("No se encontró data/geo/vias_clasificadas.gpkg")
-        log.error("Primero corrí: python etl/clustering/setup_avenidas.py")
+        log.error("Primero corré: python -m etl.clustering.setup_avenidas")
         return
 
     log.info("Cargando vías clasificadas...")
@@ -161,11 +155,19 @@ def generar_mapa():
     if clusters is not None:
         grupo_clusters = folium.FeatureGroup(name="🏘️ Zonas de Propiedades", show=True)
         COLORES_CLUSTER = [
-            "#EF4444", "#3B82F6", "#10B981", "#8B5CF6", "#F59E0B",
-            "#EC4899", "#06B6D4", "#84CC16", "#F97316", "#6366F1"
+            "#EF4444",
+            "#3B82F6",
+            "#10B981",
+            "#8B5CF6",
+            "#F59E0B",
+            "#EC4899",
+            "#06B6D4",
+            "#84CC16",
+            "#F97316",
+            "#6366F1",
         ]
         for _, row in clusters.iterrows():
-            cid   = int(row["cluster_id"])
+            cid = int(row["cluster_id"])
             color = COLORES_CLUSTER[cid % len(COLORES_CLUSTER)]
             folium.CircleMarker(
                 location=[row["centroide_lat"], row["centroide_lng"]],
@@ -177,7 +179,7 @@ def generar_mapa():
                 weight=2,
                 tooltip=folium.Tooltip(
                     f"<b>Zona {cid}</b><br>{int(row['total_propiedades'])} propiedades",
-                    style="font-family: Segoe UI; font-size: 13px;"
+                    style="font-family: Segoe UI; font-size: 13px;",
                 ),
             ).add_to(grupo_clusters)
 
@@ -185,7 +187,7 @@ def generar_mapa():
                 location=[row["centroide_lat"], row["centroide_lng"]],
                 icon=folium.DivIcon(
                     html=f'<div style="font-size:11px; font-weight:bold; color:{color}; '
-                         f'text-shadow: 1px 1px 2px white, -1px -1px 2px white;">{cid}</div>',
+                    f'text-shadow: 1px 1px 2px white, -1px -1px 2px white;">{cid}</div>',
                     icon_size=(20, 20),
                     icon_anchor=(10, 10),
                 ),
@@ -197,22 +199,22 @@ def generar_mapa():
     # Dibujar vías por categoría (una FeatureGroup por categoría)
     # ------------------------------------------------------------
     categorias_en_mapa = []
-    segmentos_totales  = 0
+    segmentos_totales = 0
 
     for categoria in COLORES.keys():
         df_cat = vias[vias["categoria"] == categoria]
         if len(df_cat) == 0:
             continue
 
-        color  = COLORES[categoria]
-        label  = LABELS.get(categoria, categoria)
+        color = COLORES[categoria]
+        label = LABELS.get(categoria, categoria)
         weight = int(df_cat["weight"].iloc[0]) if "weight" in df_cat.columns else 2
 
         grupo = folium.FeatureGroup(name=label, show=True)
 
         for _, row in df_cat.iterrows():
-            geom     = row.geometry
-            nombre   = str(row.get("nombre_via", ""))
+            geom = row.geometry
+            nombre = str(row.get("nombre_via", ""))
             cat_label = str(row.get("label", ""))
 
             tooltip_text = f"<b>{nombre}</b><br><span style='color:{color}'>{cat_label}</span>"
@@ -226,8 +228,7 @@ def generar_mapa():
                         weight=weight,
                         opacity=0.85,
                         tooltip=folium.Tooltip(
-                            tooltip_text,
-                            style="font-family: Segoe UI; font-size: 12px;"
+                            tooltip_text, style="font-family: Segoe UI; font-size: 12px;"
                         ),
                     ).add_to(grupo)
                     segmentos_totales += 1
@@ -241,8 +242,7 @@ def generar_mapa():
                             weight=weight,
                             opacity=0.85,
                             tooltip=folium.Tooltip(
-                                tooltip_text,
-                                style="font-family: Segoe UI; font-size: 12px;"
+                                tooltip_text, style="font-family: Segoe UI; font-size: 12px;"
                             ),
                         ).add_to(grupo)
                         segmentos_totales += 1
@@ -299,12 +299,12 @@ def generar_mapa():
 
     ruta_abs = os.path.abspath(ruta_salida)
     log.info(f"\n✓ Mapa guardado en: {ruta_salida}")
-    log.info(f"  Abriendo en navegador...")
+    log.info("  Abriendo en navegador...")
     webbrowser.open(f"file:///{ruta_abs}")
 
 
 if __name__ == "__main__":
-    log.info("="*60)
+    log.info("=" * 60)
     log.info("INTRAMAX — Visualizador Red Vial Santa Cruz")
-    log.info("="*60)
+    log.info("=" * 60)
     generar_mapa()

@@ -1,44 +1,38 @@
 import logging
-import pandas as pd
-import numpy as np
 from datetime import date
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-import os
 
-load_dotenv()
+import numpy as np
+import pandas as pd
+from sqlalchemy import Engine, text
+
+from .config import get_crm_engine, get_pg_engine
+
 log = logging.getLogger(__name__)
 
-def get_pg_engine():
-    url = (
-        f"postgresql+psycopg2://{os.getenv('PG_USERNAME')}:{os.getenv('PG_PASSWORD')}"
-        f"@{os.getenv('PG_HOST')}:{os.getenv('PG_PORT')}/{os.getenv('PG_DATABASE')}"
-    )
-    return create_engine(url)
-
-def get_crm_engine():
-    url = (
-        f"mysql+pymysql://{os.getenv('CRM_USERNAME')}:{os.getenv('CRM_PASSWORD')}"
-        f"@{os.getenv('CRM_HOST')}:{os.getenv('CRM_PORT')}/{os.getenv('CRM_DATABASE')}"
-    )
-    return create_engine(url)
 
 # ------------------------------------------------------------
 # Transformaciones principales
 # ------------------------------------------------------------
-def transformar_datos(df: pd.DataFrame) -> pd.DataFrame:
+def transformar_datos(
+    df: pd.DataFrame,
+    pg_engine: Engine | None = None,
+    crm_engine: Engine | None = None,
+) -> pd.DataFrame:
+    """Calcula las variables analíticas sin modificar el DataFrame recibido."""
+
+    df = df.copy()
     hoy = date.today()
+    pg_engine = pg_engine or get_pg_engine()
+    centroides = _cargar_centroides(pg_engine)
 
     # 1 — Antigüedad
-    df["year_construction"] = pd.to_datetime(
-        df["year_construction"], errors="coerce"
-    ).dt.year
+    df["year_construction"] = pd.to_datetime(df["year_construction"], errors="coerce").dt.year
     df["antiguedad"] = hoy.year - df["year_construction"]
     df["antiguedad"] = df["antiguedad"].clip(lower=0)
 
     # 2 — Tiempo en mercado
-    df["date_of_listing"]   = pd.to_datetime(df["date_of_listing"],   errors="coerce")
-    df["sold_date"]         = pd.to_datetime(df["sold_date"],         errors="coerce")
+    df["date_of_listing"] = pd.to_datetime(df["date_of_listing"], errors="coerce")
+    df["sold_date"] = pd.to_datetime(df["sold_date"], errors="coerce")
     df["cancellation_date"] = pd.to_datetime(df["cancellation_date"], errors="coerce")
     df["contract_end_date"] = pd.to_datetime(df["contract_end_date"], errors="coerce")
 
@@ -51,72 +45,91 @@ def transformar_datos(df: pd.DataFrame) -> pd.DataFrame:
             np.where(
                 df["contract_end_date"].notna(),
                 (df["contract_end_date"] - df["date_of_listing"]).dt.days,
-                (pd.Timestamp(hoy) - df["date_of_listing"]).dt.days
-            )
-        )
+                (pd.Timestamp(hoy) - df["date_of_listing"]).dt.days,
+            ),
+        ),
     )
     df["tiempo_en_mercado"] = df["tiempo_en_mercado"].clip(lower=0)
 
     # 3 — Mes y año de publicación
-    df["mes_publicacion"]  = df["date_of_listing"].dt.month
+    df["mes_publicacion"] = df["date_of_listing"].dt.month
     df["anio_publicacion"] = df["date_of_listing"].dt.year
 
     # 4 — Asignar cluster_zona por ciudad
-    df = _asignar_clusters_multiciudad(df)
+    df = _asignar_clusters_multiciudad(df, centroides=centroides)
 
-    # 5 — precio_m2
-    # def calcular_precio_m2(row):
-    #     es_terreno = str(row.get("subtipo_original", "")).lower() in [
-    #         "terreno", "terreno comercial", "propiedad agrícola/ganadera"
-    #     ]
-    #     m2_base = row["land_m2"] if es_terreno and row.get("land_m2", 0) > 0 else row["m2_construidos"]
-    #     precio  = row["precio_venta"] if row.get("precio_venta", 0) > 0 else row["precio_publicacion"]
-    #     if m2_base and m2_base > 0 and precio and precio > 0:
-    #         return precio / m2_base
-    #     return None
+    # 5 — precio_m2, vectorizado para evitar un callback Python por fila.
+    df["precio_m2"] = calcular_precio_m2(df)
 
-    # df["precio_m2"] = df.apply(calcular_precio_m2, axis=1)
-
-    def calcular_precio_m2(row):
-            es_departamento = str(row.get("subtipo_original", "")).lower() in [
-                "departamento", "dúplex", "penthouse",
-                "estudio/monoambiente", "condominio / departamento",
-                "apartamento con servicio de hotel",
-            ]
-            # Depto → construction_area_m | Casa/Terreno → total_area
-            m2_base = row["construction_area_m"] if es_departamento else row["total_area"]
-            precio  = row.get("precio_cierre") or row.get("precio_publicacion")
-            if m2_base and m2_base > 0 and precio and precio > 0:
-                return precio / m2_base
-            return None
-        
-    
-    df["precio_m2"] = df.apply(calcular_precio_m2, axis=1)
-    
     # 6 — Features de zona por ciudad
-    df = _calcular_features_zona_multiciudad(df)
+    df = _calcular_features_zona_multiciudad(
+        df,
+        crm_engine=crm_engine,
+        pg_engine=pg_engine,
+        centroides=centroides,
+    )
 
     # 7 — numero_reducciones (default 0 hasta tener historial)
     df["numero_reducciones"] = 0
 
     return df
 
+
+def _cargar_centroides(pg_engine: Engine) -> pd.DataFrame:
+    """Carga una vez los centroides usados por todas las transformaciones."""
+
+    with pg_engine.connect() as conn:
+        return pd.read_sql(
+            "SELECT cluster_id, ciudad, centroide_lat, centroide_lng FROM zona_clusters",
+            conn,
+        )
+
+
+def calcular_precio_m2(df: pd.DataFrame) -> pd.Series:
+    """Calcula precio por m² usando cierre y, si falta, publicación."""
+
+    subtipos_departamento = {
+        "departamento",
+        "dúplex",
+        "penthouse",
+        "estudio/monoambiente",
+        "condominio / departamento",
+        "apartamento con servicio de hotel",
+    }
+    es_departamento = (
+        df["subtipo_original"].fillna("").astype(str).str.lower().isin(subtipos_departamento)
+    )
+    construidos = pd.to_numeric(df["construction_area_m"], errors="coerce")
+    totales = pd.to_numeric(df["total_area"], errors="coerce")
+    superficie = construidos.where(es_departamento, totales)
+
+    cierre = pd.to_numeric(df["precio_cierre"], errors="coerce")
+    publicacion = pd.to_numeric(df["precio_publicacion"], errors="coerce")
+    precio = cierre.where(cierre.gt(0), publicacion)
+
+    valido = superficie.gt(0) & precio.gt(0)
+    return (precio / superficie).where(valido)
+
+
 # ------------------------------------------------------------
 # Asignar cluster_zona respetando ciudad
 # Cada ciudad tiene sus propios centroides
 # ------------------------------------------------------------
-def _asignar_clusters_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
+def _asignar_clusters_multiciudad(
+    df: pd.DataFrame,
+    pg_engine: Engine | None = None,
+    centroides: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     from sklearn.metrics import pairwise_distances
 
-    engine = get_pg_engine()
-    with engine.connect() as conn:
-        clusters = pd.read_sql(
-            "SELECT cluster_id, ciudad, centroide_lat, centroide_lng FROM zona_clusters",
-            conn
-        )
+    if centroides is None:
+        centroides = _cargar_centroides(pg_engine or get_pg_engine())
 
-    if clusters.empty:
-        log.warning("  zona_clusters está vacía — cluster_zona será NULL. Ejecutá setup_clusters.py primero.")
+    if centroides.empty:
+        log.warning(
+            "  zona_clusters está vacía — cluster_zona será NULL. "
+            "Ejecutá: python -m etl.clustering.setup_clusters"
+        )
         df["cluster_zona"] = None
         return df
 
@@ -124,21 +137,21 @@ def _asignar_clusters_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
     ciudades_sin_clusters = []
 
     for ciudad in df["ciudad"].unique():
-        cents_ciudad = clusters[clusters["ciudad"] == ciudad]
+        cents_ciudad = centroides[centroides["ciudad"] == ciudad]
 
         if len(cents_ciudad) == 0:
             ciudades_sin_clusters.append(ciudad)
             continue
 
-        mask   = df["ciudad"] == ciudad
+        mask = df["ciudad"] == ciudad
         coords = df.loc[mask, ["latitude", "longitude"]].values
 
         if len(coords) == 0:
             continue
 
-        centroides = cents_ciudad[["centroide_lat", "centroide_lng"]].values
-        distancias = pairwise_distances(coords, centroides, metric="euclidean")
-        indices    = distancias.argmin(axis=1)
+        matriz_centroides = cents_ciudad[["centroide_lat", "centroide_lng"]].values
+        distancias = pairwise_distances(coords, matriz_centroides, metric="euclidean")
+        indices = distancias.argmin(axis=1)
 
         df.loc[mask, "cluster_zona"] = cents_ciudad["cluster_id"].values[indices]
 
@@ -146,35 +159,39 @@ def _asignar_clusters_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
         log.warning(f"  Sin clusters para: {', '.join(ciudades_sin_clusters)}")
 
     asignados = df["cluster_zona"].notna().sum()
-    log.info(f"  Clusters asignados: {asignados}/{len(df)} propiedades en {df['ciudad'].nunique()} ciudades")
+    log.info(
+        "  Clusters asignados: %s/%s propiedades en %s ciudades",
+        asignados,
+        len(df),
+        df["ciudad"].nunique(),
+    )
     return df
+
 
 # ------------------------------------------------------------
 # Features de zona por ciudad
 # ratio_activas_vendidas_zona y diferencia_vs_promedio_zona
 # ------------------------------------------------------------
-def _calcular_features_zona_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
+def _calcular_features_zona_multiciudad(
+    df: pd.DataFrame,
+    crm_engine: Engine | None = None,
+    pg_engine: Engine | None = None,
+    centroides: pd.DataFrame | None = None,
+) -> pd.DataFrame:
     from sklearn.metrics import pairwise_distances
 
-    crm_engine = get_crm_engine()
-    pg_engine  = get_pg_engine()
-
-    with pg_engine.connect() as conn:
-        centroides = pd.read_sql(
-            "SELECT cluster_id, ciudad, centroide_lat, centroide_lng FROM zona_clusters",
-            conn
-        )
+    crm_engine = crm_engine or get_crm_engine()
+    if centroides is None:
+        centroides = _cargar_centroides(pg_engine or get_pg_engine())
 
     def asignar_cluster_a(df_coords: pd.DataFrame, ciudad: str) -> pd.DataFrame:
         cents = centroides[centroides["ciudad"] == ciudad]
         if len(cents) == 0:
             df_coords["cluster_zona"] = None
             return df_coords
-        coords     = df_coords[["latitude", "longitude"]].values
+        coords = df_coords[["latitude", "longitude"]].values
         distancias = pairwise_distances(
-            coords,
-            cents[["centroide_lat", "centroide_lng"]].values,
-            metric="euclidean"
+            coords, cents[["centroide_lat", "centroide_lng"]].values, metric="euclidean"
         )
         indices = distancias.argmin(axis=1)
         df_coords = df_coords.copy()
@@ -201,9 +218,11 @@ def _calcular_features_zona_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
         lng_max = cents_ciudad["centroide_lng"].max() + 0.2
 
         params = {
-            "ciudad":  ciudad,
-            "lat_min": lat_min, "lat_max": lat_max,
-            "lng_min": lng_min, "lng_max": lng_max,
+            "ciudad": ciudad,
+            "lat_min": lat_min,
+            "lat_max": lat_max,
+            "lng_min": lng_min,
+            "lng_max": lng_max,
         }
 
         # ================================================================
@@ -288,40 +307,40 @@ def _calcular_features_zona_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
 
         try:
             with crm_engine.connect() as conn:
-                df_estado_venta    = pd.read_sql(ratio_venta_query,      conn, params=params)
-                df_precios_venta   = pd.read_sql(promedio_venta_query,   conn, params=params)
-                df_estado_alquiler = pd.read_sql(ratio_alquiler_query,   conn, params=params)
+                df_estado_venta = pd.read_sql(ratio_venta_query, conn, params=params)
+                df_precios_venta = pd.read_sql(promedio_venta_query, conn, params=params)
+                df_estado_alquiler = pd.read_sql(ratio_alquiler_query, conn, params=params)
                 df_precios_alquiler = pd.read_sql(promedio_alquiler_query, conn, params=params)
         except Exception as e:
             log.error(f"  Error calculando features para {ciudad}: {e}")
             continue
 
         # ── Procesar VENTA ───────────────────────────────────────────────
-        resumen_ratio_venta   = _calcular_ratio(df_estado_venta,   ciudad, "Venta Aceptada/Vendida", asignar_cluster_a)
+        resumen_ratio_venta = _calcular_ratio(
+            df_estado_venta, ciudad, "Venta Aceptada/Vendida", asignar_cluster_a
+        )
         resumen_precios_venta = _calcular_promedio_m2(df_precios_venta, ciudad, asignar_cluster_a)
 
         # ── Procesar ALQUILER ────────────────────────────────────────────
-        resumen_ratio_alquiler   = _calcular_ratio(df_estado_alquiler,   ciudad, "Alquilado", asignar_cluster_a)
-        resumen_precios_alquiler = _calcular_promedio_m2(df_precios_alquiler, ciudad, asignar_cluster_a)
+        resumen_ratio_alquiler = _calcular_ratio(
+            df_estado_alquiler, ciudad, "Alquilado", asignar_cluster_a
+        )
+        resumen_precios_alquiler = _calcular_promedio_m2(
+            df_precios_alquiler, ciudad, asignar_cluster_a
+        )
 
         # ── Aplicar a filas de esta ciudad según tipo_transaccion ────────
-        mask_ciudad  = df["ciudad"] == ciudad
-        mask_venta   = mask_ciudad & (df["tipo_transaccion"] == "Venta")
+        mask_ciudad = df["ciudad"] == ciudad
+        mask_venta = mask_ciudad & (df["tipo_transaccion"] == "Venta")
         mask_alquiler = mask_ciudad & (df["tipo_transaccion"] == "Alquiler")
 
-        df = _aplicar_features_zona(
-            df, mask_venta,
-            resumen_ratio_venta,
-            resumen_precios_venta
-        )
+        df = _aplicar_features_zona(df, mask_venta, resumen_ratio_venta, resumen_precios_venta)
 
         df = _aplicar_features_zona(
-            df, mask_alquiler,
-            resumen_ratio_alquiler,
-            resumen_precios_alquiler
+            df, mask_alquiler, resumen_ratio_alquiler, resumen_precios_alquiler
         )
 
-        n_venta    = mask_venta.sum()
+        n_venta = mask_venta.sum()
         n_alquiler = mask_alquiler.sum()
         log.info(f"  ✓ {ciudad}: {n_venta} ventas + {n_alquiler} alquileres con features de zona")
 
@@ -329,10 +348,7 @@ def _calcular_features_zona_multiciudad(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def _calcular_ratio(
-    df_estado: pd.DataFrame,
-    ciudad: str,
-    status_cerrado: str,
-    asignar_fn
+    df_estado: pd.DataFrame, ciudad: str, status_cerrado: str, asignar_fn
 ) -> pd.DataFrame:
     """Calcula ratio activas/cerradas por cluster."""
     if len(df_estado) == 0:
@@ -340,33 +356,29 @@ def _calcular_ratio(
 
     df_estado = asignar_fn(df_estado, ciudad)
 
-    resumen = df_estado.groupby("cluster_zona").apply(
-        lambda g: pd.Series({
-            "activas":  (g["status"] == "Activa").sum(),
-            "cerradas": (g["status"] == status_cerrado).sum(),
-        })
-    ).reset_index()
-
-    resumen["ratio_activas_vendidas_zona"] = (
-        resumen["activas"] / resumen["cerradas"].replace(0, 1)
+    resumen = (
+        df_estado.assign(
+            activas=df_estado["status"].eq("Activa").astype(int),
+            cerradas=df_estado["status"].eq(status_cerrado).astype(int),
+        )
+        .groupby("cluster_zona", as_index=False)
+        .agg(activas=("activas", "sum"), cerradas=("cerradas", "sum"))
     )
+
+    resumen["ratio_activas_vendidas_zona"] = resumen["activas"] / resumen["cerradas"].replace(0, 1)
     return resumen[["cluster_zona", "ratio_activas_vendidas_zona"]]
 
 
-def _calcular_promedio_m2(
-    df_precios: pd.DataFrame,
-    ciudad: str,
-    asignar_fn
-) -> pd.DataFrame:
+def _calcular_promedio_m2(df_precios: pd.DataFrame, ciudad: str, asignar_fn) -> pd.DataFrame:
     """Calcula promedio precio_m2 por cluster."""
     if len(df_precios) == 0:
         return pd.DataFrame(columns=["cluster_zona", "promedio_m2_zona"])
 
     df_precios = asignar_fn(df_precios, ciudad)
 
-    return df_precios.groupby("cluster_zona").agg(
-        promedio_m2_zona=("precio_m2", "mean")
-    ).reset_index()
+    return (
+        df_precios.groupby("cluster_zona").agg(promedio_m2_zona=("precio_m2", "mean")).reset_index()
+    )
 
 
 def _aplicar_features_zona(
@@ -376,37 +388,22 @@ def _aplicar_features_zona(
     resumen_precios: pd.DataFrame,
 ) -> pd.DataFrame:
     """Aplica ratio y diferencia_vs_promedio a las filas del mask."""
-    if mask.sum() == 0:
+    if not mask.any():
         return df
 
-    df_subset = df.loc[mask].copy()
+    clusters = df.loc[mask, "cluster_zona"]
 
-    # Aplicar ratio
-    if len(resumen_ratio) > 0:
-        df_subset = df_subset.merge(
-            resumen_ratio[["cluster_zona", "ratio_activas_vendidas_zona"]],
-            on="cluster_zona", how="left", suffixes=("", "_new")
+    if not resumen_ratio.empty:
+        ratio_por_cluster = resumen_ratio.set_index("cluster_zona")["ratio_activas_vendidas_zona"]
+        df.loc[mask, "ratio_activas_vendidas_zona"] = (
+            clusters.map(ratio_por_cluster).fillna(0).to_numpy()
         )
-        if "ratio_activas_vendidas_zona_new" in df_subset.columns:
-            df_subset["ratio_activas_vendidas_zona"] = (
-                df_subset["ratio_activas_vendidas_zona_new"].fillna(0)
-            )
-            df_subset = df_subset.drop(columns=["ratio_activas_vendidas_zona_new"])
 
-    # Aplicar diferencia vs promedio
-    if len(resumen_precios) > 0:
-        df_subset = df_subset.merge(
-            resumen_precios[["cluster_zona", "promedio_m2_zona"]],
-            on="cluster_zona", how="left"
-        )
-        df_subset["diferencia_vs_promedio_zona"] = np.where(
-            df_subset["promedio_m2_zona"] > 0,
-            (df_subset["precio_m2"] - df_subset["promedio_m2_zona"]) / df_subset["promedio_m2_zona"],
-            0
-        )
-        df_subset = df_subset.drop(columns=["promedio_m2_zona"], errors="ignore")
-
-    df.loc[mask, "ratio_activas_vendidas_zona"] = df_subset["ratio_activas_vendidas_zona"].values
-    df.loc[mask, "diferencia_vs_promedio_zona"] = df_subset["diferencia_vs_promedio_zona"].values
+    if not resumen_precios.empty:
+        promedio_por_cluster = resumen_precios.set_index("cluster_zona")["promedio_m2_zona"]
+        promedio = clusters.map(promedio_por_cluster)
+        precios = pd.to_numeric(df.loc[mask, "precio_m2"], errors="coerce")
+        diferencia = ((precios - promedio) / promedio).where(promedio.gt(0), 0)
+        df.loc[mask, "diferencia_vs_promedio_zona"] = diferencia.fillna(0).to_numpy()
 
     return df

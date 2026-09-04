@@ -1,43 +1,20 @@
-import logging
-import pandas as pd
-from sqlalchemy import create_engine, text
-from dotenv import load_dotenv
-import os
+"""Extracción de operaciones cerradas desde el CRM."""
 
-load_dotenv()
+from __future__ import annotations
+
+import logging
+from datetime import date
+
+import pandas as pd
+from sqlalchemy import Engine, bindparam, text
+
+from .config import get_crm_engine
+from .constants import CIUDADES_ETL, TIPOS_TRANSACCION
+
 log = logging.getLogger(__name__)
 
-# ------------------------------------------------------------
-# Ciudades y bbox
-# ------------------------------------------------------------
-CIUDADES_ETL = {
-    "Santa Cruz de la Sierra": {"lat": (-18.5, -17.0), "lng": (-64.0, -62.5)},
-    "Cochabamba":              {"lat": (-17.8, -17.2), "lng": (-66.5, -65.8)},
-    "La Paz":                  {"lat": (-16.8, -16.3), "lng": (-68.3, -67.8)},
-    "Porongo":                 {"lat": (-17.9, -17.5), "lng": (-63.6, -63.2)},
-    "El Alto":                 {"lat": (-16.6, -16.4), "lng": (-68.3, -68.0)},
-    "Oruro":                   {"lat": (-18.1, -17.8), "lng": (-67.2, -67.0)},
-    "Tiquipaya":               {"lat": (-17.4, -17.2), "lng": (-66.3, -66.1)},
-    "Sacaba":                  {"lat": (-17.5, -17.3), "lng": (-65.9, -65.7)},
-    "Sucre":                   {"lat": (-19.2, -18.9), "lng": (-65.4, -65.1)},
-    "La Guardia":              {"lat": (-17.9, -17.7), "lng": (-63.4, -63.2)},
-    "Warnes":                  {"lat": (-17.6, -17.4), "lng": (-63.3, -63.1)},
-    "Quillacollo":             {"lat": (-17.5, -17.3), "lng": (-66.3, -66.1)},
-    "Samaipata":               {"lat": (-18.3, -18.1), "lng": (-63.9, -63.7)},
-    "Cotoca":                  {"lat": (-17.9, -17.7), "lng": (-63.1, -62.9)},
-    "Potosí":                  {"lat": (-19.7, -19.4), "lng": (-65.9, -65.6)},
-}
 
-def get_crm_engine():
-    url = (
-        f"mysql+pymysql://{os.getenv('CRM_USERNAME')}:{os.getenv('CRM_PASSWORD')}"
-        f"@{os.getenv('CRM_HOST')}:{os.getenv('CRM_PORT')}/{os.getenv('CRM_DATABASE')}"
-    )
-    return create_engine(url)
-
-# ------------------------------------------------------------
-# Query parametrizada — funciona para venta y alquiler
-# ------------------------------------------------------------
+# La comparación directa sobre sold_date permite que MySQL use su índice.
 QUERY_CRM = text("""
     SELECT
         l.id                            AS id_propiedad,
@@ -73,72 +50,82 @@ QUERY_CRM = text("""
     LEFT JOIN listings_information li       ON li.listing_id = l.id
     LEFT JOIN subtype_properties sp         ON li.subtype_property_id = sp.id
     LEFT JOIN state_properties stp          ON li.state_property_id = stp.id
-    LEFT JOIN properties_category pc        ON li.property_category_id = pc.id
     LEFT JOIN listing_prices lp             ON lp.listing_id = l.id
     LEFT JOIN locations loc                 ON loc.listing_id = l.id
     LEFT JOIN cities ci                     ON loc.city_id = ci.id
     LEFT JOIN areas a                       ON a.id = l.area_id
-    LEFT JOIN transactions t ON t.listing_id = l.id
+    JOIN transactions t ON t.listing_id = l.id
         AND t.transaction_type_id = :ltt_id
         AND t.transaction_status_id IN (2, 5)
 
     WHERE ltt.id = :ltt_id
       AND l.status_listing_id = :status_id
-      AND ci.name = :ciudad
-      AND loc.latitude  BETWEEN :lat_min AND :lat_max
-      AND loc.longitude BETWEEN :lng_min AND :lng_max
-      AND YEAR(t.sold_date) IN (2025, 2026, 2024)
-    ORDER BY l.id DESC
-""")
+      AND ci.name IN :ciudades
+      AND t.sold_date >= :fecha_desde
+""").bindparams(bindparam("ciudades", expanding=True))
 
-# Tipos a extraer: Venta y Alquiler
-TIPOS_TRANSACCION = [
-    {"ltt_id": 1, "status_id": 8, "label": "Venta"},
-    {"ltt_id": 2, "status_id": 7, "label": "Alquiler"},
-]
 
-# ------------------------------------------------------------
-# Extracción principal
-# ------------------------------------------------------------
-def extraer_datos_crm() -> pd.DataFrame:
-    engine = get_crm_engine()
-    dfs    = []
+def _filtrar_bounding_boxes(df: pd.DataFrame) -> pd.DataFrame:
+    """Conserva solo coordenadas que caen dentro del rango de su ciudad."""
 
-    for tipo in TIPOS_TRANSACCION:
-        log.info(f"\n  Extrayendo {tipo['label']}...")
+    latitude = pd.to_numeric(df["latitude"], errors="coerce")
+    longitude = pd.to_numeric(df["longitude"], errors="coerce")
+    valida = pd.Series(False, index=df.index)
+    for ciudad, bbox in CIUDADES_ETL.items():
+        valida |= (
+            df["ciudad"].eq(ciudad)
+            & latitude.between(*bbox["lat"])
+            & longitude.between(*bbox["lng"])
+        )
+    return df.loc[valida].copy()
 
-        for ciudad, bbox in CIUDADES_ETL.items():
+
+def extraer_datos_crm(engine: Engine | None = None) -> pd.DataFrame:
+    """Extrae ventas y alquileres de los últimos tres años calendario.
+
+    Se acepta un ``engine`` opcional para facilitar las pruebas. Durante una
+    ejecución real hace solo una consulta por tipo de transacción y valida en
+    bloque los rangos geográficos de cada ciudad.
+    """
+
+    engine = engine or get_crm_engine()
+    fecha_desde = date(date.today().year - 2, 1, 1)
+    dataframes: list[pd.DataFrame] = []
+
+    with engine.connect() as connection:
+        for transaccion in TIPOS_TRANSACCION:
+            log.info("\n  Extrayendo %s...", transaccion["label"])
+            params = {
+                "ltt_id": transaccion["ltt_id"],
+                "status_id": transaccion["status_id"],
+                "ciudades": list(CIUDADES_ETL),
+                "fecha_desde": fecha_desde,
+            }
+
             try:
-                with engine.connect() as conn:
-                    df_ciudad = pd.read_sql(QUERY_CRM, conn, params={
-                        "ltt_id":    tipo["ltt_id"],
-                        "status_id": tipo["status_id"],
-                        "ciudad":    ciudad,
-                        "lat_min":   bbox["lat"][0],
-                        "lat_max":   bbox["lat"][1],
-                        "lng_min":   bbox["lng"][0],
-                        "lng_max":   bbox["lng"][1],
-                    })
-
-                if len(df_ciudad) > 0:
-                    df_ciudad["tipo_transaccion"] = tipo["label"]
-                    log.info(f"    → {ciudad}: {len(df_ciudad)} {tipo['label'].lower()}s")
-                    dfs.append(df_ciudad)
-
-            except Exception as e:
-                log.error(f"    Error extrayendo {tipo['label']} en {ciudad}: {e}")
+                df_transaccion = pd.read_sql(QUERY_CRM, connection, params=params)
+            except Exception:
+                log.exception("    Error extrayendo %s", transaccion["label"])
                 continue
 
-    if not dfs:
+            df_transaccion = _filtrar_bounding_boxes(df_transaccion)
+            if df_transaccion.empty:
+                continue
+
+            df_transaccion["tipo_transaccion"] = transaccion["label"]
+            for ciudad, cantidad in df_transaccion["ciudad"].value_counts().items():
+                log.info("    → %s: %s registros", ciudad, cantidad)
+            dataframes.append(df_transaccion)
+
+    if not dataframes:
         log.error("No se extrajeron datos de ninguna ciudad")
         return pd.DataFrame()
 
-    df_total   = pd.concat(dfs, ignore_index=True)
-    ventas     = (df_total["tipo_transaccion"] == "Venta").sum()
+    df_total = pd.concat(dataframes, ignore_index=True)
+    ventas = (df_total["tipo_transaccion"] == "Venta").sum()
     alquileres = (df_total["tipo_transaccion"] == "Alquiler").sum()
 
-    log.info(f"\nExtracción completa: {len(df_total)} filas")
-    log.info(f"  Ventas:     {ventas}")
-    log.info(f"  Alquileres: {alquileres}")
-
+    log.info("\nExtracción completa: %s filas", len(df_total))
+    log.info("  Ventas:     %s", ventas)
+    log.info("  Alquileres: %s", alquileres)
     return df_total
