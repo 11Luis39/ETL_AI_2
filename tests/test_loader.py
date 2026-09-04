@@ -3,7 +3,7 @@ from datetime import date
 import numpy as np
 import pandas as pd
 
-from etl.loader import _limpiar_valor, _preparar_fila
+from etl.loader import _limpiar_valor, _preparar_fila, generar_dataset_entrenable
 
 
 def test_preparar_fila_no_sobrescribe_m2_terreno_calculado():
@@ -41,3 +41,19 @@ def test_limpiar_valor_convierte_tipos_numpy_y_no_finitos():
     assert _limpiar_valor(np.int64(7)) == 7
     assert isinstance(_limpiar_valor(np.int64(7)), int)
     assert _limpiar_valor(np.inf) is None
+
+
+def test_generar_dataset_entrenable_respeta_directorio(tmp_path):
+    df = pd.DataFrame(
+        {
+            "id_propiedad": ["venta-1", "alquiler-1"],
+            "tipo_transaccion": ["Venta", "Alquiler"],
+            "precio_cierre": [100_000.0, 800.0],
+        }
+    )
+
+    total = generar_dataset_entrenable(df, directorio=tmp_path)
+
+    assert total == 2
+    assert (tmp_path / "dataset_ventas.parquet").exists()
+    assert (tmp_path / "dataset_alquileres.parquet").exists()

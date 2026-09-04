@@ -29,7 +29,8 @@ extractor → cleaner → transformer → loader → PostgreSQL
 - `etl/cleaner.py`: validaciones, normalización y reporte de exclusiones.
 - `etl/transformer.py`: fechas, precio por m², clusters y features de zona.
 - `etl/loader.py`: upsert por lotes y exportación de datasets.
-- `etl/main.py`: orquestación y línea de comandos.
+- `etl/pipeline.py`: servicio reutilizable e inyectable del pipeline.
+- `etl/main.py`: adaptador de línea de comandos.
 - `etl/clustering/`: creación de zonas y visualizaciones geográficas.
 - `etl/modelo/`: entrenamiento y predicción de precios.
 - `db/init.sql`: esquema analítico de PostgreSQL.
@@ -101,6 +102,13 @@ ruff check etl tests
 ```
 
 Los archivos generados se guardan bajo `data/`, que está ignorado por Git.
+
+## Migración a FastAPI
+
+El núcleo ETL no depende de FastAPI y acepta engines SQLAlchemy inyectados por
+la aplicación anfitriona. La selección de archivos, arquitectura objetivo,
+adaptador HTTP y estrategia de trabajos están documentados en
+[`docs/MIGRACION_ETL_FASTAPI.md`](docs/MIGRACION_ETL_FASTAPI.md).
 
 ## Herramientas auxiliares
 

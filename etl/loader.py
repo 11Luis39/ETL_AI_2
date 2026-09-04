@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 from collections.abc import Iterator, Sequence
 from numbers import Real
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -262,18 +262,22 @@ def cargar_datos(
     return insertados, actualizados
 
 
-def generar_dataset_entrenable(df: pd.DataFrame) -> int:
+def generar_dataset_entrenable(
+    df: pd.DataFrame,
+    directorio: Path | str = Path("data"),
+) -> int:
     """Exporta datasets separados para modelos de venta y alquiler."""
 
-    os.makedirs("data", exist_ok=True)
+    directorio = Path(directorio)
+    directorio.mkdir(parents=True, exist_ok=True)
     df = df.rename(columns=RENAME_MAP).copy()
     df["precio_venta"] = df["precio_cierre"].where(df["tipo_transaccion"].eq("Venta"))
     df["precio_alquiler_mes"] = df["precio_cierre"].where(df["tipo_transaccion"].eq("Alquiler"))
 
     total = 0
     configuraciones = (
-        ("Venta", "precio_venta", "data/dataset_ventas.parquet"),
-        ("Alquiler", "precio_alquiler_mes", "data/dataset_alquileres.parquet"),
+        ("Venta", "precio_venta", directorio / "dataset_ventas.parquet"),
+        ("Alquiler", "precio_alquiler_mes", directorio / "dataset_alquileres.parquet"),
     )
     for transaccion, columna_precio, ruta in configuraciones:
         subset = df.loc[df["tipo_transaccion"].eq(transaccion) & df[columna_precio].notna()].copy()
